@@ -23,6 +23,7 @@ namespace VirtualPhenix.EditorTools
         private const string CreatePrefabPref = "VP.PokemonStadiumImporter.CreatePrefab";
         private const string PrefabRendererPref = "VP.PokemonStadiumImporter.PrefabRenderer";
         private const string FlipTexturesYPref = "VP.PokemonStadiumImporter.FlipTexturesY";
+        private const string MirrorTexturesPref = "VP.PokemonStadiumImporter.MirrorTextures";
         private const string AnimationSystemPref = "VP.PokemonStadiumImporter.AnimationSystem";
         private const string InstantiatePrefabPref = "VP.PokemonStadiumImporter.InstantiatePrefab";
 
@@ -67,6 +68,7 @@ namespace VirtualPhenix.EditorTools
         private bool _createPrefab = true;
         private PrefabRendererMode _prefabRendererMode = PrefabRendererMode.SkinnedRenderer;
         private bool _flipTexturesY = true;
+        private bool _mirrorTextures = true;
         private AnimationSystemMode _animationSystemMode = AnimationSystemMode.Mecanim;
         private bool _instantiatePrefab;
         private Vector2 _scroll;
@@ -89,6 +91,7 @@ namespace VirtualPhenix.EditorTools
             _createPrefab = EditorPrefs.GetBool(CreatePrefabPref, true);
             _prefabRendererMode = (PrefabRendererMode)EditorPrefs.GetInt(PrefabRendererPref, (int)PrefabRendererMode.SkinnedRenderer);
             _flipTexturesY = EditorPrefs.GetBool(FlipTexturesYPref, true);
+            _mirrorTextures = EditorPrefs.GetBool(MirrorTexturesPref, true);
             _animationSystemMode = (AnimationSystemMode)EditorPrefs.GetInt(AnimationSystemPref, (int)AnimationSystemMode.Mecanim);
             _instantiatePrefab = EditorPrefs.GetBool(InstantiatePrefabPref, false);
         }
@@ -180,6 +183,10 @@ namespace VirtualPhenix.EditorTools
 
             EditorGUILayout.Space();
             _flipTexturesY = EditorGUILayout.ToggleLeft("Flip textures vertically (Y)", _flipTexturesY);
+            _mirrorTextures = EditorGUILayout.ToggleLeft("Mirror textures when required by the model", _mirrorTextures);
+            EditorGUILayout.HelpBox(
+                "Normal textures remain clamped. When mirror is enabled, G_SETTILE mirror flags create native per-axis mirror on Unity 2017.1+ or baked mirror variants on Unity 5.6.",
+                MessageType.None);
             EditorGUILayout.Space();
 
             EditorGUILayout.Space();
@@ -246,6 +253,7 @@ namespace VirtualPhenix.EditorTools
             EditorPrefs.SetBool(CreatePrefabPref, _createPrefab);
             EditorPrefs.SetInt(PrefabRendererPref, (int)_prefabRendererMode);
             EditorPrefs.SetBool(FlipTexturesYPref, _flipTexturesY);
+            EditorPrefs.SetBool(MirrorTexturesPref, _mirrorTextures);
             EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
             EditorPrefs.SetBool(InstantiatePrefabPref, _instantiatePrefab);
 
@@ -318,6 +326,7 @@ namespace VirtualPhenix.EditorTools
                             _prefabRendererMode,
                             false,
                             _flipTexturesY,
+                            _mirrorTextures,
                             _animationSystemMode,
                             _instantiatePrefab);
                         imported++;
@@ -625,9 +634,21 @@ namespace VirtualPhenix.EditorTools
         public int Tlut = -1;
         public int MaterialDisplayList = -1;
         public int Cull;
+        public bool MirrorS;
+        public bool MirrorT;
+        public bool ClampS;
+        public bool ClampT;
         public readonly List<VertexData> Vertices = new List<VertexData>();
         public readonly List<int> Indices = new List<int>();
         public readonly Dictionary<string, int> Remap = new Dictionary<string, int>();
+    }
+
+    internal sealed class TileState
+    {
+        public bool MirrorS;
+        public bool MirrorT;
+        public bool ClampS;
+        public bool ClampT;
     }
 
     internal sealed class TrackData
@@ -704,12 +725,17 @@ namespace VirtualPhenix.EditorTools
             private int _currentTexture = -1;
             private int _currentTlut = -1;
             private int _currentMaterial = -1;
+            private readonly TileState[] _tiles = new TileState[8];
+            private int _currentTile;
 
             public ParserState(FragmentModel model)
             {
                 _model = model;
                 _f = model.Reader;
                 _stack.Add(-1);
+
+                for (int i = 0; i < _tiles.Length; i++)
+                    _tiles[i] = new TileState();
             }
 
             private int CurrentBone()
@@ -733,7 +759,13 @@ namespace VirtualPhenix.EditorTools
                     else if (command == 0x17) ReadModelHeader(offset);
                     else if (command == 0x1C) _model.RootScale = new Vector3(_f.S32(offset + 4) / 65536f, _f.S32(offset + 8) / 65536f, _f.S32(offset + 0x0C) / 65536f);
                     else if (command == 0x1D) ReadBone(offset);
-                    else if (command == 0x23) { _currentTexture = _f.S16(offset + 8); _currentTlut = _f.S16(offset + 0x0A); _currentMaterial = _f.Ptr(offset + 4); }
+                    else if (command == 0x23)
+                    {
+                        _currentTexture = _f.S16(offset + 8);
+                        _currentTlut = _f.S16(offset + 0x0A);
+                        _currentMaterial = _f.Ptr(offset + 4);
+                        ApplyMaterialDisplayList(_currentMaterial);
+                    }
                     else if (command == 0x22) RunDisplayList(_f.Ptr(offset + 4), CurrentBone(), 0);
                     else if (command == 0x1E)
                     {
@@ -800,6 +832,51 @@ namespace VirtualPhenix.EditorTools
                 _stack[_stack.Count - 1] = index;
             }
 
+            private void ApplyMaterialDisplayList(int offset)
+            {
+                if (offset < 0)
+                    return;
+
+                int currentTile = _currentTile;
+                int guard = 0;
+
+                while (offset >= 0 && offset + 8 <= _f.Data.Length && guard++ < 256)
+                {
+                    uint w0 = _f.U32(offset);
+                    uint w1 = _f.U32(offset + 4);
+                    int op = (int)(w0 >> 24);
+                    offset += 8;
+
+                    if (op == 0xDF)
+                        break;
+
+                    if (op == 0xD7)
+                    {
+                        currentTile = (int)((w0 >> 8) & 0x07);
+                        _currentTile = currentTile;
+                    }
+                    else if (op == 0xF5)
+                    {
+                        int tileIndex = (int)((w1 >> 24) & 0x07);
+                        int cmt = (int)((w1 >> 18) & 0x03);
+                        int cms = (int)((w1 >> 8) & 0x03);
+
+                        TileState tile = _tiles[tileIndex];
+                        tile.MirrorS = (cms & 1) != 0;
+                        tile.ClampS = (cms & 2) != 0;
+                        tile.MirrorT = (cmt & 1) != 0;
+                        tile.ClampT = (cmt & 2) != 0;
+                    }
+                    else if (op == 0xDE)
+                    {
+                        int nested = unchecked((int)w1) - FragmentReader.BaseAddress;
+                        ApplyMaterialDisplayList(nested);
+                        if (((w0 >> 16) & 0xFF) != 0)
+                            break;
+                    }
+                }
+            }
+
             private void RunDisplayList(int o, int bone, int depth)
             {
                 if (o < 0 || depth > 8) return;
@@ -843,7 +920,26 @@ namespace VirtualPhenix.EditorTools
                             _vertexCache[slot] = v;
                         }
                     }
-                    else if (op == 0xD9) cull = (cull & (int)(w0 & 0xFFFFFF)) | unchecked((int)w1);
+                    else if (op == 0xD9)
+                    {
+                        cull = (cull & (int)(w0 & 0xFFFFFF)) | unchecked((int)w1);
+                    }
+                    else if (op == 0xD7)
+                    {
+                        _currentTile = (int)((w0 >> 8) & 0x07);
+                    }
+                    else if (op == 0xF5)
+                    {
+                        int tileIndex = (int)((w1 >> 24) & 0x07);
+                        int cmt = (int)((w1 >> 18) & 0x03);
+                        int cms = (int)((w1 >> 8) & 0x03);
+
+                        TileState tile = _tiles[tileIndex];
+                        tile.MirrorS = (cms & 1) != 0;
+                        tile.ClampS = (cms & 2) != 0;
+                        tile.MirrorT = (cmt & 1) != 0;
+                        tile.ClampT = (cmt & 2) != 0;
+                    }
                     else if (op == 0x05 || op == 0x06)
                     {
                         PrimitiveData primitive = GetPrimitive(cull & 0x600);
@@ -856,14 +952,28 @@ namespace VirtualPhenix.EditorTools
 
             private PrimitiveData GetPrimitive(int cull)
             {
-                string key = _currentTexture + ":" + _currentTlut + ":" + _currentMaterial + ":" + cull;
-                PrimitiveData p;
-                if (!_primitiveMap.TryGetValue(key, out p))
+                TileState tile = _tiles[Mathf.Clamp(_currentTile, 0, _tiles.Length - 1)];
+                string key = _currentTexture + ":" + _currentTlut + ":" + _currentMaterial + ":" + cull + ":" +
+                             tile.MirrorS + ":" + tile.MirrorT + ":" + tile.ClampS + ":" + tile.ClampT;
+
+                PrimitiveData primitive;
+                if (!_primitiveMap.TryGetValue(key, out primitive))
                 {
-                    p = new PrimitiveData(); p.Texture = _currentTexture; p.Tlut = _currentTlut; p.MaterialDisplayList = _currentMaterial; p.Cull = cull;
-                    _primitiveMap.Add(key, p); _model.Primitives.Add(p);
+                    primitive = new PrimitiveData();
+                    primitive.Texture = _currentTexture;
+                    primitive.Tlut = _currentTlut;
+                    primitive.MaterialDisplayList = _currentMaterial;
+                    primitive.Cull = cull;
+                    primitive.MirrorS = tile.MirrorS;
+                    primitive.MirrorT = tile.MirrorT;
+                    primitive.ClampS = tile.ClampS;
+                    primitive.ClampT = tile.ClampT;
+
+                    _primitiveMap.Add(key, primitive);
+                    _model.Primitives.Add(primitive);
                 }
-                return p;
+
+                return primitive;
             }
 
             private void EmitTriangle(PrimitiveData p, int a, int b, int c, int cull)
@@ -1028,7 +1138,7 @@ namespace VirtualPhenix.EditorTools
         public static void Write(FragmentModel model, string rootPath, int fileIndex, bool overwrite,
             VP_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
             VP_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
-            VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab)
+            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab)
         {
             string safeName = Sanitize(model.Name);
             string folderName = model.Species.ToString("000") + "_" + safeName;
@@ -1069,7 +1179,7 @@ namespace VirtualPhenix.EditorTools
 
             if (contentMode == VP_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
             {
-                CreateTextures(model, folder, false, flipTexturesY);
+                CreateTextures(model, folder, false, flipTexturesY, mirrorTextures);
                 return;
             }
 
@@ -1083,9 +1193,9 @@ namespace VirtualPhenix.EditorTools
                 if (prefabRequested || exportAnimations)
                     CreateSkeleton(model, root.transform, pivots, joints);
 
-                Material[] materials = null;
+                Dictionary<string, Material> materials = null;
                 if (exportTextures)
-                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY);
+                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, mirrorTextures);
 
                 if (exportMeshes)
                 {
@@ -1094,7 +1204,7 @@ namespace VirtualPhenix.EditorTools
                         PrimitiveData primitive = model.Primitives[p];
                         if (primitive.Indices.Count == 0) continue;
 
-                        Mesh mesh = CreateMesh(model, primitive, joints, root.transform, skinnedPrefab);
+                        Mesh mesh = CreateMesh(model, primitive, joints, root.transform, skinnedPrefab, mirrorTextures);
                         mesh.name = "Mesh_" + p.ToString("00");
                         string meshPath = folder + "/Meshes/" + mesh.name + ".asset";
                         AssetDatabase.CreateAsset(mesh, meshPath);
@@ -1229,36 +1339,123 @@ namespace VirtualPhenix.EditorTools
             }
         }
 
-        private static void AssignMaterial(Renderer renderer, PrimitiveData primitive, Material[] materials)
+        private static void AssignMaterial(Renderer renderer, PrimitiveData primitive, Dictionary<string, Material> materials)
         {
-            if (materials == null || materials.Length == 0)
+            if (materials == null || materials.Count == 0)
                 return;
-            renderer.sharedMaterial = primitive.Texture >= 0 && primitive.Texture < materials.Length
-                ? materials[primitive.Texture]
-                : materials[materials.Length - 1];
+
+            PrimitiveData keyPrimitive = new PrimitiveData();
+            keyPrimitive.Texture = primitive.Texture;
+            keyPrimitive.Tlut = primitive.Tlut;
+            keyPrimitive.ClampS = true;
+            keyPrimitive.ClampT = true;
+            keyPrimitive.MirrorS = primitive.MirrorS;
+            keyPrimitive.MirrorT = primitive.MirrorT;
+
+            Material material;
+            if (!materials.TryGetValue(GetTextureVariantKey(keyPrimitive), out material))
+            {
+                keyPrimitive.MirrorS = false;
+                keyPrimitive.MirrorT = false;
+                if (!materials.TryGetValue(GetTextureVariantKey(keyPrimitive), out material))
+                    materials.TryGetValue("fallback", out material);
+            }
+
+            renderer.sharedMaterial = material;
         }
 
-        private static Material[] CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY)
+        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool mirrorTextures)
         {
-            int count = model.Textures.Count;
-            Material[] materials = createMaterials ? new Material[count + 1] : null;
+            Dictionary<string, Material> materials = createMaterials
+                ? new Dictionary<string, Material>()
+                : null;
+
             Shader shader = null;
             if (createMaterials)
             {
                 shader = Shader.Find("Unlit/Transparent Cutout");
-                if (shader == null) shader = Shader.Find("Unlit/Texture");
+                if (shader == null)
+                    shader = Shader.Find("Unlit/Texture");
             }
-            for (int i = 0; i < count; i++)
+
+            Dictionary<string, PrimitiveData> variants = new Dictionary<string, PrimitiveData>();
+
+            for (int i = 0; i < model.Textures.Count; i++)
             {
-                DecodedTexture decoded = DecodeTexture(model, i, FindTlutForTexture(model, i), 0);
-                if (flipTexturesY) FlipTextureY(decoded);
+                PrimitiveData baseVariant = new PrimitiveData();
+                baseVariant.Texture = i;
+                baseVariant.Tlut = FindTlutForTexture(model, i);
+                baseVariant.ClampS = true;
+                baseVariant.ClampT = true;
+                variants[GetTextureVariantKey(baseVariant)] = baseVariant;
+            }
+
+            for (int i = 0; i < model.Primitives.Count; i++)
+            {
+                PrimitiveData source = model.Primitives[i];
+                if (source.Texture < 0 || source.Texture >= model.Textures.Count)
+                    continue;
+
+                AddTextureVariant(variants, source.Texture, source.Tlut,
+                    mirrorTextures && source.MirrorS,
+                    mirrorTextures && source.MirrorT);
+            }
+
+            if (mirrorTextures)
+            {
+                for (int primitiveIndex = 0; primitiveIndex < model.Primitives.Count; primitiveIndex++)
+                {
+                    PrimitiveData source = model.Primitives[primitiveIndex];
+                    if (source.Texture < 0 || source.Texture >= model.Textures.Count)
+                        continue;
+                    if (!source.MirrorS && !source.MirrorT)
+                        continue;
+
+                    TextureRecord sourceTexture = model.Textures[source.Texture];
+
+                    for (int textureIndex = 0; textureIndex < model.Textures.Count; textureIndex++)
+                    {
+                        TextureRecord candidate = model.Textures[textureIndex];
+                        if (!AreAnimationTextureFramesCompatible(sourceTexture, candidate))
+                            continue;
+
+                        int tlut = FindTlutForTexture(model, textureIndex);
+                        if (tlut < 0)
+                            tlut = source.Tlut;
+
+                        AddTextureVariant(
+                            variants,
+                            textureIndex,
+                            tlut,
+                            source.MirrorS,
+                            source.MirrorT);
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<string, PrimitiveData> pair in variants)
+            {
+                PrimitiveData primitive = pair.Value;
+                int textureIndex = primitive.Texture;
+                DecodedTexture decoded = DecodeTexture(model, textureIndex, primitive.Tlut, 0);
+
+                if (flipTexturesY)
+                    FlipTextureY(decoded);
+
+#if !UNITY_2017_1_OR_NEWER
+                if (mirrorTextures && (primitive.MirrorS || primitive.MirrorT))
+                    decoded = BakeMirroredTexture(decoded, primitive.MirrorS, primitive.MirrorT);
+#endif
+
                 Texture2D texture = new Texture2D(decoded.Width, decoded.Height, TextureFormat.RGBA32, false);
-                texture.name = "Texture_" + i.ToString("00");
-                texture.SetPixels32(decoded.Pixels); texture.Apply(false, false);
-                byte[] png = texture.EncodeToPNG();
+                texture.name = "Texture_" + textureIndex.ToString("00") + BuildTextureVariantSuffix(primitive);
+                texture.SetPixels32(decoded.Pixels);
+                texture.Apply(false, false);
+
+                string texturePath = folder + "/Textures/" + texture.name + ".png";
+                File.WriteAllBytes(ToAbsolutePath(texturePath), texture.EncodeToPNG());
                 UnityEngine.Object.DestroyImmediate(texture);
-                string texturePath = folder + "/Textures/Texture_" + i.ToString("00") + ".png";
-                File.WriteAllBytes(ToAbsolutePath(texturePath), png);
+
                 AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
                 TextureImporter importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
                 if (importer != null)
@@ -1266,23 +1463,130 @@ namespace VirtualPhenix.EditorTools
                     importer.textureType = TextureImporterType.Default;
                     importer.mipmapEnabled = false;
                     importer.filterMode = FilterMode.Bilinear;
-                    importer.wrapMode = TextureWrapMode.Clamp;
                     importer.alphaIsTransparency = true;
+
+#if UNITY_2017_1_OR_NEWER
+                    importer.wrapModeU = mirrorTextures && primitive.MirrorS
+                        ? TextureWrapMode.Mirror
+                        : TextureWrapMode.Clamp;
+                    importer.wrapModeV = mirrorTextures && primitive.MirrorT
+                        ? TextureWrapMode.Mirror
+                        : TextureWrapMode.Clamp;
+#else
+                    importer.wrapMode = TextureWrapMode.Clamp;
+#endif
                     importer.SaveAndReimport();
                 }
+
                 if (createMaterials)
                 {
-                    Material material = new Material(shader); material.name = "Material_" + i.ToString("00"); material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                    Material material = new Material(shader);
+                    material.name = "Material_" + textureIndex.ToString("00") + BuildTextureVariantSuffix(primitive);
+                    material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+
                     string materialPath = folder + "/Materials/" + material.name + ".mat";
-                    AssetDatabase.CreateAsset(material, materialPath); materials[i] = material;
+                    AssetDatabase.CreateAsset(material, materialPath);
+                    materials[pair.Key] = material;
                 }
             }
+
             if (createMaterials)
             {
-                Material fallback = new Material(shader); fallback.name = "Material_None"; fallback.color = Color.white;
-                AssetDatabase.CreateAsset(fallback, folder + "/Materials/Material_None.mat"); materials[count] = fallback;
+                Material fallback = new Material(shader);
+                fallback.name = "Material_None";
+                fallback.color = Color.white;
+                AssetDatabase.CreateAsset(fallback, folder + "/Materials/Material_None.mat");
+                materials["fallback"] = fallback;
             }
+
             return materials;
+        }
+
+#if UNITY_2017_1_OR_NEWER
+        private static TextureWrapMode GetNativeWrapMode(bool mirror, bool clamp)
+        {
+            if (clamp)
+                return TextureWrapMode.Clamp;
+            return mirror ? TextureWrapMode.Mirror : TextureWrapMode.Repeat;
+        }
+#endif
+
+        private static DecodedTexture BakeMirroredTexture(DecodedTexture source, bool mirrorX, bool mirrorY)
+        {
+            int sourceWidth = source.Width;
+            int sourceHeight = source.Height;
+            int targetWidth = mirrorX ? sourceWidth * 2 : sourceWidth;
+            int targetHeight = mirrorY ? sourceHeight * 2 : sourceHeight;
+            Color32[] targetPixels = new Color32[targetWidth * targetHeight];
+
+            for (int y = 0; y < targetHeight; y++)
+            {
+                int sourceY = y;
+                if (mirrorY && y >= sourceHeight)
+                    sourceY = sourceHeight - 1 - (y - sourceHeight);
+
+                for (int x = 0; x < targetWidth; x++)
+                {
+                    int sourceX = x;
+                    if (mirrorX && x >= sourceWidth)
+                        sourceX = sourceWidth - 1 - (x - sourceWidth);
+
+                    targetPixels[y * targetWidth + x] = source.Pixels[sourceY * sourceWidth + sourceX];
+                }
+            }
+
+            DecodedTexture result = new DecodedTexture();
+            result.Width = targetWidth;
+            result.Height = targetHeight;
+            result.Pixels = targetPixels;
+            return result;
+        }
+
+        private static void AddTextureVariant(
+            Dictionary<string, PrimitiveData> variants,
+            int textureIndex,
+            int tlut,
+            bool mirrorS,
+            bool mirrorT)
+        {
+            PrimitiveData variant = new PrimitiveData();
+            variant.Texture = textureIndex;
+            variant.Tlut = tlut;
+            variant.ClampS = true;
+            variant.ClampT = true;
+            variant.MirrorS = mirrorS;
+            variant.MirrorT = mirrorT;
+
+            variants[GetTextureVariantKey(variant)] = variant;
+        }
+
+        private static bool AreAnimationTextureFramesCompatible(TextureRecord a, TextureRecord b)
+        {
+            return a.Format == b.Format &&
+                   a.Size == b.Size &&
+                   a.Width == b.Width &&
+                   a.Height == b.Height;
+        }
+
+        private static string GetTextureVariantKey(PrimitiveData primitive)
+        {
+            return primitive.Texture + ":" +
+                   primitive.Tlut + ":" +
+                   primitive.MirrorS + ":" +
+                   primitive.MirrorT + ":" +
+                   primitive.ClampS + ":" +
+                   primitive.ClampT;
+        }
+
+        private static string BuildTextureVariantSuffix(PrimitiveData primitive)
+        {
+            string suffix = string.Empty;
+
+            if (primitive.MirrorS)
+                suffix += "_MirrorX";
+            if (primitive.MirrorT)
+                suffix += "_MirrorY";
+            return suffix;
         }
 
 
@@ -1310,7 +1614,7 @@ namespace VirtualPhenix.EditorTools
             return -1;
         }
 
-        private static Mesh CreateMesh(FragmentModel model, PrimitiveData primitive, Transform[] bones, Transform root, bool includeSkinning)
+        private static Mesh CreateMesh(FragmentModel model, PrimitiveData primitive, Transform[] bones, Transform root, bool includeSkinning, bool mirrorTextures)
         {
             Mesh mesh = new Mesh();
             int count = primitive.Vertices.Count;
@@ -1343,7 +1647,17 @@ namespace VirtualPhenix.EditorTools
                     normals[i] = sourceNormal;
                 }
 
-                uv[i] = new Vector2(vertex.UVRaw.x / tw, 1f - vertex.UVRaw.y / th);
+                float u = vertex.UVRaw.x / tw;
+                float v = 1f - vertex.UVRaw.y / th;
+
+#if !UNITY_2017_1_OR_NEWER
+                if (mirrorTextures && primitive.MirrorS)
+                    u *= 0.5f;
+                if (mirrorTextures && primitive.MirrorT)
+                    v *= 0.5f;
+#endif
+
+                uv[i] = new Vector2(u, v);
                 colors[i] = vertex.Color;
 
                 if (includeSkinning && boneIndex >= 0)
