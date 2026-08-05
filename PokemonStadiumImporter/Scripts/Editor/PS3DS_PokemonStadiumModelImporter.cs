@@ -25,6 +25,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         private const string CreatePrefabPref = "VP.PokemonStadiumImporter.CreatePrefab";
         private const string PrefabRendererPref = "VP.PokemonStadiumImporter.PrefabRenderer";
         private const string FlipTexturesYPref = "VP.PokemonStadiumImporter.FlipTexturesY";
+        private const string FlipTexturesXPref = "VP.PokemonStadiumImporter.FlipTexturesX";
         private const string MirrorTexturesPref = "VP.PokemonStadiumImporter.MirrorTextures";
         private const string AnimationSystemPref = "VP.PokemonStadiumImporter.AnimationSystem";
         private const string InstantiatePrefabPref = "VP.PokemonStadiumImporter.InstantiatePrefab";
@@ -86,6 +87,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         private bool _createPrefab = true;
         private PrefabRendererMode _prefabRendererMode = PrefabRendererMode.SkinnedRenderer;
         private bool _flipTexturesY = true;
+        private bool _flipTexturesX = false;
         private bool _mirrorTextures = true;
         private AnimationSystemMode _animationSystemMode = AnimationSystemMode.Mecanim;
         private MaterialAnimationMode _materialAnimationMode = MaterialAnimationMode.ByAnimation;
@@ -117,6 +119,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             _createPrefab = EditorPrefs.GetBool(CreatePrefabPref, true);
             _prefabRendererMode = (PrefabRendererMode)EditorPrefs.GetInt(PrefabRendererPref, (int)PrefabRendererMode.SkinnedRenderer);
             _flipTexturesY = EditorPrefs.GetBool(FlipTexturesYPref, true);
+            _flipTexturesX = EditorPrefs.GetBool(FlipTexturesXPref, false);
             _mirrorTextures = EditorPrefs.GetBool(MirrorTexturesPref, true);
             _animationSystemMode = (AnimationSystemMode)EditorPrefs.GetInt(AnimationSystemPref, (int)AnimationSystemMode.Mecanim);
             _materialAnimationMode = (MaterialAnimationMode)EditorPrefs.GetInt(MaterialAnimationModePref, (int)MaterialAnimationMode.ByAnimation);
@@ -252,6 +255,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Textures", EditorStyles.boldLabel);
             _flipTexturesY = EditorGUILayout.ToggleLeft("Flip textures vertically (Y)", _flipTexturesY);
+            _flipTexturesX = EditorGUILayout.ToggleLeft("Flip textures vertically (X)", _flipTexturesX);
             _mirrorTextures = EditorGUILayout.ToggleLeft("Mirror textures when required by the model", _mirrorTextures);
             EditorGUILayout.HelpBox(
                 "Normal textures remain clamped. When mirror is enabled, G_SETTILE mirror flags create native per-axis mirror on Unity 2017.1+ or baked mirror variants on Unity 5.6.",
@@ -324,6 +328,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             EditorPrefs.SetBool(CreatePrefabPref, _createPrefab);
             EditorPrefs.SetInt(PrefabRendererPref, (int)_prefabRendererMode);
             EditorPrefs.SetBool(FlipTexturesYPref, _flipTexturesY);
+            EditorPrefs.SetBool(FlipTexturesXPref, _flipTexturesX);
             EditorPrefs.SetBool(MirrorTexturesPref, _mirrorTextures);
             EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
             EditorPrefs.SetInt(MaterialAnimationModePref, (int)_materialAnimationMode);
@@ -410,6 +415,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                             _prefabRendererMode,
                             false,
                             _flipTexturesY,
+                            _flipTexturesX,
                             _mirrorTextures,
                             _animationSystemMode,
                             _materialAnimationMode,
@@ -1380,7 +1386,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
         public static void Write(FragmentModel model, string rootPath, int fileIndex, bool overwrite,
             PS3DS_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
-            PS3DS_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
+            PS3DS_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY, bool _flipTexturesX,
             bool mirrorTextures, PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
             PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode, bool instantiatePrefab, bool combineParts,
             Shader materialShader, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance,
@@ -1425,7 +1431,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
             if (contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
             {
-                CreateTextures(model, folder, false, flipTexturesY, mirrorTextures, materialShader);
+                CreateTextures(model, folder, false, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader);
                 return;
             }
 
@@ -1441,7 +1447,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
                 Dictionary<string, Material> materials = null;
                 if (exportTextures)
-                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, mirrorTextures, materialShader);
+                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader);
 
                 List<PartBuildData> builtParts = new List<PartBuildData>();
 
@@ -1652,7 +1658,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             renderer.sharedMaterial = material;
         }
 
-        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool mirrorTextures, Shader materialShader)
+        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool flipTexturesX, bool mirrorTextures, Shader materialShader)
         {
             Dictionary<string, Material> materials = createMaterials
                 ? new Dictionary<string, Material>()
@@ -1732,6 +1738,9 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
                 if (flipTexturesY)
                     FlipTextureY(decoded);
+
+                if (flipTexturesX)
+                    FlipTextureX(decoded);
 
 #if !UNITY_2017_1_OR_NEWER
                 if (mirrorTextures && (primitive.MirrorS || primitive.MirrorT))
@@ -1895,6 +1904,24 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                     Color32 t = p[a + x];
                     p[a + x] = p[b + x];
                     p[b + x] = t;
+                }
+            }
+        }
+
+        private static void FlipTextureX(DecodedTexture texture)
+        {
+            int w = texture.Width;
+            int h = texture.Height;
+            Color32[] p = texture.Pixels;
+            for (int y = 0; y < h; y++)
+            {
+                int a = y * w;
+                int b = a + w - 1;
+                for (int x = 0; x < w / 2; x++)
+                {
+                    Color32 t = p[a + x];
+                    p[a + x] = p[b - x];
+                    p[b - x] = t;
                 }
             }
         }
