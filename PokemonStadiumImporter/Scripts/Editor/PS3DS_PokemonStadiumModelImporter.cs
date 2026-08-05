@@ -100,7 +100,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         private float _animatedVertexColorStrength = 1.0f;
         private Vector2 _scroll;
 
-        [MenuItem("Stadium2Unity/Importer")]
+        [MenuItem("Stadium2Unity/Model Importer")]
         private static void OpenWindow()
         {
             GetWindow<PS3DS_PokemonStadiumModelImporter>(false, "Stadium2Unity Importer", true).minSize = new Vector2(620f, 430f);
