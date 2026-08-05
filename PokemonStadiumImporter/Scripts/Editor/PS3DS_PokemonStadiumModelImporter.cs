@@ -8,10 +8,12 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using VirtualPhenix.PokemonSnap3DS;
+using System.Reflection;
 
-namespace VirtualPhenix.EditorTools
+namespace VirtualPhenix.PokemonStadium.EditorTools
 {
-    public sealed class VP_PokemonStadiumModelImporter : EditorWindow
+    public sealed class PS3DS_PokemonStadiumModelImporter : EditorWindow
     {
         private const string RomPref = "VP.PokemonStadiumImporter.RomPath";
         private const string OutputPref = "VP.PokemonStadiumImporter.OutputPath";
@@ -33,6 +35,7 @@ namespace VirtualPhenix.EditorTools
         private const string ImportVertexColorsPref = "VP.PokemonStadiumImporter.ImportVertexColors";
         private const string VertexColorLuminancePref = "VP.PokemonStadiumImporter.VertexColorLuminance";
         private const string AnimatedVertexColorStrengthPref = "VP.PokemonStadiumImporter.AnimatedVertexColorStrength";
+        private const string MaterialAnimationModePref = "VP.PokemonStadiumImporter.MaterialAnimationMode";
 
         private enum ImportMode
         {
@@ -65,6 +68,12 @@ namespace VirtualPhenix.EditorTools
             Legacy
         }
 
+        internal enum MaterialAnimationMode
+        {
+            ByAnimation,
+            ByCallback
+        }
+
         private string _romPath;
         private string _outputPath = "Assets/PokemonStadium1/Exported/Models";
         private bool _overwrite = true;
@@ -79,6 +88,7 @@ namespace VirtualPhenix.EditorTools
         private bool _flipTexturesY = true;
         private bool _mirrorTextures = true;
         private AnimationSystemMode _animationSystemMode = AnimationSystemMode.Mecanim;
+        private MaterialAnimationMode _materialAnimationMode = MaterialAnimationMode.ByAnimation;
         private bool _instantiatePrefab;
         private bool _combineParts;
         private Shader _materialShader;
@@ -88,10 +98,10 @@ namespace VirtualPhenix.EditorTools
         private float _animatedVertexColorStrength = 1.0f;
         private Vector2 _scroll;
 
-        [MenuItem("VirtualPhenix/Pokemon Stadium/Model Importer")]
+        [MenuItem("Stadium2Unity/Importer")]
         private static void OpenWindow()
         {
-            GetWindow<VP_PokemonStadiumModelImporter>(false, "Pokemon Stadium Importer", true).minSize = new Vector2(620f, 430f);
+            GetWindow<PS3DS_PokemonStadiumModelImporter>(false, "Stadium2Unity Importer", true).minSize = new Vector2(620f, 430f);
         }
 
         private void OnEnable()
@@ -109,6 +119,7 @@ namespace VirtualPhenix.EditorTools
             _flipTexturesY = EditorPrefs.GetBool(FlipTexturesYPref, true);
             _mirrorTextures = EditorPrefs.GetBool(MirrorTexturesPref, true);
             _animationSystemMode = (AnimationSystemMode)EditorPrefs.GetInt(AnimationSystemPref, (int)AnimationSystemMode.Mecanim);
+            _materialAnimationMode = (MaterialAnimationMode)EditorPrefs.GetInt(MaterialAnimationModePref, (int)MaterialAnimationMode.ByAnimation);
             _instantiatePrefab = EditorPrefs.GetBool(InstantiatePrefabPref, false);
             _combineParts = EditorPrefs.GetBool(CombinePartsPref, false);
             _vertexColorsAsGrayscale = EditorPrefs.GetBool(VertexColorsGrayscalePref, true);
@@ -128,7 +139,7 @@ namespace VirtualPhenix.EditorTools
         {
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("VP_PokemonStadiumModelImporter", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("PS3DS_PokemonStadiumModelImporter", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "Imports Pokemon Stadium 1 battle models directly from an N64 ROM. The importer creates native Unity meshes, textures, materials, skeletons, animation clips and prefabs. No Python or external converter is used.",
                 MessageType.Info);
@@ -205,10 +216,17 @@ namespace VirtualPhenix.EditorTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Animation system", EditorStyles.boldLabel);
             _animationSystemMode = (AnimationSystemMode)EditorGUILayout.EnumPopup("Animation type", _animationSystemMode);
+            _materialAnimationMode = (MaterialAnimationMode)EditorGUILayout.EnumPopup("Material animation", _materialAnimationMode);
+
             if (_animationSystemMode == AnimationSystemMode.Mecanim)
                 EditorGUILayout.HelpBox("Creates non-legacy clips and, for a skinned Everything prefab, an Animator Controller with one state per imported clip.", MessageType.None);
             else
                 EditorGUILayout.HelpBox("Creates legacy clips and, for a skinned Everything prefab, an Animation component containing all imported clips.", MessageType.None);
+
+            if (_materialAnimationMode == MaterialAnimationMode.ByAnimation)
+                EditorGUILayout.HelpBox("Stores material changes directly as object-reference keys in each AnimationClip.", MessageType.None);
+            else
+                EditorGUILayout.HelpBox("Creates AnimationEvents that call PS3DS_TextureSwapper.SwapSet(float). The prefab receives all generated texture swap sets.", MessageType.None);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Prefab", EditorStyles.boldLabel);
@@ -308,6 +326,7 @@ namespace VirtualPhenix.EditorTools
             EditorPrefs.SetBool(FlipTexturesYPref, _flipTexturesY);
             EditorPrefs.SetBool(MirrorTexturesPref, _mirrorTextures);
             EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
+            EditorPrefs.SetInt(MaterialAnimationModePref, (int)_materialAnimationMode);
             EditorPrefs.SetBool(InstantiatePrefabPref, _instantiatePrefab);
             EditorPrefs.SetBool(CombinePartsPref, _combineParts);
             EditorPrefs.SetString(MaterialShaderPref, _materialShader != null ? _materialShader.name : string.Empty);
@@ -347,7 +366,7 @@ namespace VirtualPhenix.EditorTools
                     lastIndex < 0 || lastIndex >= files.Count)
                 {
                     EditorUtility.DisplayDialog(
-                        "Pokemon Stadium Importer",
+                        "Stadium2Unity Importer",
                         "The selected index or range is outside the archive. Valid indices are 0 to " + (files.Count - 1) + ".",
                         "OK");
                     return;
@@ -393,6 +412,7 @@ namespace VirtualPhenix.EditorTools
                             _flipTexturesY,
                             _mirrorTextures,
                             _animationSystemMode,
+                            _materialAnimationMode,
                             _instantiatePrefab,
                             _combineParts,
                             _materialShader,
@@ -419,12 +439,12 @@ namespace VirtualPhenix.EditorTools
                     result += "\nThe operation was cancelled before completing the selection.";
                 result += "\nArchive contains " + files.Count + " entries (indices 0 to " + (files.Count - 1) + ").";
 
-                EditorUtility.DisplayDialog("Pokemon Stadium Importer", result, "OK");
+                EditorUtility.DisplayDialog("Stadium2Unity Importer", result, "OK");
             }
             catch (Exception ex)
             {
                 Debug.LogException(ex);
-                EditorUtility.DisplayDialog("Pokemon Stadium Importer", ex.Message, "OK");
+                EditorUtility.DisplayDialog("Stadium2Unity Importer", ex.Message, "OK");
             }
             finally
             {
@@ -1343,10 +1363,26 @@ namespace VirtualPhenix.EditorTools
             public bool IsMaterialAnimated;
         }
 
+        private sealed class MaterialCallbackContext
+        {
+            public PS3DS_TextureSwapper Swapper;
+            public readonly List<PS3DS_TextureSwapper.TextureSwapSet> Sets =
+                new List<PS3DS_TextureSwapper.TextureSwapSet>();
+            public readonly Dictionary<string, int> SetIndices =
+                new Dictionary<string, int>();
+        }
+
+        private sealed class MaterialStateEntry
+        {
+            public PartBuildData Part;
+            public Texture Texture;
+        }
+
         public static void Write(FragmentModel model, string rootPath, int fileIndex, bool overwrite,
-            VP_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
-            VP_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
-            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab, bool combineParts,
+            PS3DS_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
+            PS3DS_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
+            bool mirrorTextures, PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode, bool instantiatePrefab, bool combineParts,
             Shader materialShader, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance,
             float animatedVertexColorStrength)
         {
@@ -1359,35 +1395,35 @@ namespace VirtualPhenix.EditorTools
                 AssetDatabase.DeleteAsset(folder);
             }
 
-            bool exportMeshes = contentMode == VP_PokemonStadiumModelImporter.ContentMode.MeshesOnly ||
-                                contentMode == VP_PokemonStadiumModelImporter.ContentMode.MeshesAndTextures ||
-                                contentMode == VP_PokemonStadiumModelImporter.ContentMode.Everything;
-            bool exportTextures = contentMode == VP_PokemonStadiumModelImporter.ContentMode.TexturesOnly ||
-                                  contentMode == VP_PokemonStadiumModelImporter.ContentMode.MeshesAndTextures ||
-                                  contentMode == VP_PokemonStadiumModelImporter.ContentMode.Everything;
-            bool exportAnimations = contentMode == VP_PokemonStadiumModelImporter.ContentMode.AnimationsOnly ||
-                                    contentMode == VP_PokemonStadiumModelImporter.ContentMode.Everything;
+            bool exportMeshes = contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.MeshesOnly ||
+                                contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.MeshesAndTextures ||
+                                contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.Everything;
+            bool exportTextures = contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.TexturesOnly ||
+                                  contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.MeshesAndTextures ||
+                                  contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.Everything;
+            bool exportAnimations = contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.AnimationsOnly ||
+                                    contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.Everything;
             bool prefabRequested = createPrefab && exportMeshes;
-            bool skinnedPrefab = prefabRequested && prefabRendererMode == VP_PokemonStadiumModelImporter.PrefabRendererMode.SkinnedRenderer;
-            bool staticPrefab = prefabRequested && prefabRendererMode == VP_PokemonStadiumModelImporter.PrefabRendererMode.StaticRenderer;
+            bool skinnedPrefab = prefabRequested && prefabRendererMode == PS3DS_PokemonStadiumModelImporter.PrefabRendererMode.SkinnedRenderer;
+            bool staticPrefab = prefabRequested && prefabRendererMode == PS3DS_PokemonStadiumModelImporter.PrefabRendererMode.StaticRenderer;
             bool createMaterials = prefabRequested && exportTextures;
 
-            VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder);
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder);
             if (generateJson)
             {
-                VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/JSON");
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/JSON");
                 PipelineJsonWriter.Write(model, folder + "/JSON/" + folderName + ".json", fileIndex);
             }
             if (exportMeshes)
-                VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Meshes");
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Meshes");
             if (exportTextures)
-                VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Textures");
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Textures");
             if (createMaterials)
-                VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Materials");
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Materials");
             if (exportAnimations)
-                VP_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Animations");
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Animations");
 
-            if (contentMode == VP_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
+            if (contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
             {
                 CreateTextures(model, folder, false, flipTexturesY, mirrorTextures, materialShader);
                 return;
@@ -1461,17 +1497,26 @@ namespace VirtualPhenix.EditorTools
                         CreateCombinedPart(model, folder, root.transform, joints, skinnedPrefab, builtParts, vertexColorsAsGrayscale, importVertexColors, vertexColorLuminance);
                 }
 
+                MaterialCallbackContext callbackContext = null;
+                if (exportAnimations &&
+                    materialAnimationMode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback &&
+                    prefabRequested)
+                {
+                    callbackContext = new MaterialCallbackContext();
+                    callbackContext.Swapper = root.AddComponent<PS3DS_TextureSwapper>();
+                }
+
                 if (exportAnimations)
                 {
                     bool attachAnimationSystem = skinnedPrefab &&
-                                                 contentMode == VP_PokemonStadiumModelImporter.ContentMode.Everything;
+                                                 contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.Everything;
                     Animation legacyAnimation = null;
                     Animator mecanimAnimator = null;
                     List<AnimationClip> createdClips = new List<AnimationClip>();
 
                     if (attachAnimationSystem)
                     {
-                        if (animationSystemMode == VP_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
+                        if (animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
                             legacyAnimation = root.AddComponent<Animation>();
                         else
                             mecanimAnimator = root.AddComponent<Animator>();
@@ -1479,8 +1524,19 @@ namespace VirtualPhenix.EditorTools
 
                     for (int i = 0; i < model.Animations.Count; i++)
                     {
-                        bool legacyClip = animationSystemMode == VP_PokemonStadiumModelImporter.AnimationSystemMode.Legacy;
-                        AnimationClip clip = CreateClip(model, model.Animations[i], root.transform, pivots, joints, legacyClip, builtParts, materials, mirrorTextures);
+                        bool legacyClip = animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy;
+                        AnimationClip clip = CreateClip(
+                            model,
+                            model.Animations[i],
+                            root.transform,
+                            pivots,
+                            joints,
+                            legacyClip,
+                            builtParts,
+                            materials,
+                            mirrorTextures,
+                            materialAnimationMode,
+                            callbackContext);
                         clip.name = "Animation_" + i.ToString("00");
                         string clipPath = folder + "/Animations/" + clip.name + ".anim";
                         AssetDatabase.CreateAsset(clip, clipPath);
@@ -1511,6 +1567,9 @@ namespace VirtualPhenix.EditorTools
                         mecanimAnimator.runtimeAnimatorController = controller;
                     }
                 }
+
+                if (callbackContext != null && callbackContext.Swapper != null)
+                    AssignTextureSwapSets(callbackContext);
 
                 if (staticPrefab)
                     DestroySkeletonRoots(model, root.transform, pivots);
@@ -2100,13 +2159,57 @@ namespace VirtualPhenix.EditorTools
             return combined;
         }
 
-        private static void AddMaterialAnimationCurves(FragmentModel model, AnimationData source, AnimationClip clip,
-            Transform root, List<PartBuildData> parts, Dictionary<string, Material> materials, bool mirrorTextures)
+        private static void AddMaterialAnimation(
+            FragmentModel model,
+            AnimationData source,
+            AnimationClip clip,
+            Transform root,
+            List<PartBuildData> parts,
+            Dictionary<string, Material> materials,
+            bool mirrorTextures,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode mode,
+            MaterialCallbackContext callbackContext)
         {
-            if (source.AuxAnimation < 0 || source.AuxAnimation >= model.AuxAnimations.Count || materials == null)
+            if (source.AuxAnimation < 0 ||
+                source.AuxAnimation >= model.AuxAnimations.Count ||
+                materials == null)
                 return;
 
+            if (mode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback)
+            {
+                AddMaterialAnimationCallbacks(
+                    model,
+                    source,
+                    clip,
+                    parts,
+                    materials,
+                    mirrorTextures,
+                    callbackContext);
+            }
+            else
+            {
+                AddMaterialAnimationCurves(
+                    model,
+                    source,
+                    clip,
+                    root,
+                    parts,
+                    materials,
+                    mirrorTextures);
+            }
+        }
+
+        private static void AddMaterialAnimationCurves(
+            FragmentModel model,
+            AnimationData source,
+            AnimationClip clip,
+            Transform root,
+            List<PartBuildData> parts,
+            Dictionary<string, Material> materials,
+            bool mirrorTextures)
+        {
             AuxAnimationData auxiliary = model.AuxAnimations[source.AuxAnimation];
+
             for (int i = 0; i < parts.Count; i++)
             {
                 PartBuildData part = parts[i];
@@ -2120,6 +2223,7 @@ namespace VirtualPhenix.EditorTools
 
                 List<ObjectReferenceKeyframe> keys = new List<ObjectReferenceKeyframe>();
                 Material previous = null;
+
                 for (int frame = 0; frame < track.Length; frame++)
                 {
                     int textureIndex = track[frame];
@@ -2145,6 +2249,134 @@ namespace VirtualPhenix.EditorTools
             }
         }
 
+        private static void AddMaterialAnimationCallbacks(
+            FragmentModel model,
+            AnimationData source,
+            AnimationClip clip,
+            List<PartBuildData> parts,
+            Dictionary<string, Material> materials,
+            bool mirrorTextures,
+            MaterialCallbackContext context)
+        {
+            if (context == null || context.Swapper == null)
+                return;
+
+            AuxAnimationData auxiliary = model.AuxAnimations[source.AuxAnimation];
+            int frameCount = Math.Max(1, auxiliary.FrameCount);
+            int previousSet = -1;
+            List<AnimationEvent> events = new List<AnimationEvent>();
+
+            for (int frame = 0; frame < frameCount; frame++)
+            {
+                List<MaterialStateEntry> state = new List<MaterialStateEntry>();
+
+                for (int i = 0; i < parts.Count; i++)
+                {
+                    PartBuildData part = parts[i];
+                    int channel = part.Primitive.TextureAnimation;
+                    if (channel < 0 || channel >= auxiliary.Channels.Length || part.Renderer == null)
+                        continue;
+
+                    int[] track = auxiliary.Channels[channel];
+                    if (track == null || track.Length == 0)
+                        continue;
+
+                    int textureIndex = track[Math.Min(frame, track.Length - 1)];
+                    Material material = FindAnimatedMaterial(materials, part.Primitive, textureIndex, mirrorTextures);
+                    if (material == null || material.mainTexture == null)
+                        continue;
+
+                    MaterialStateEntry entry = new MaterialStateEntry();
+                    entry.Part = part;
+                    entry.Texture = material.mainTexture;
+                    state.Add(entry);
+                }
+
+                if (state.Count == 0)
+                    continue;
+
+                int setIndex = GetOrCreateTextureSwapSet(context, state);
+                if (setIndex == previousSet)
+                    continue;
+
+                AnimationEvent animationEvent = new AnimationEvent();
+                animationEvent.time = frame / 30f;
+                animationEvent.functionName = "SwapSet";
+                animationEvent.floatParameter = setIndex;
+                events.Add(animationEvent);
+                previousSet = setIndex;
+            }
+
+            if (events.Count > 0)
+                AnimationUtility.SetAnimationEvents(clip, events.ToArray());
+        }
+
+        private static int GetOrCreateTextureSwapSet(
+            MaterialCallbackContext context,
+            List<MaterialStateEntry> state)
+        {
+            state.Sort(delegate(MaterialStateEntry a, MaterialStateEntry b)
+            {
+                return a.Part.PrimitiveIndex.CompareTo(b.Part.PrimitiveIndex);
+            });
+
+            StringBuilder keyBuilder = new StringBuilder();
+            for (int i = 0; i < state.Count; i++)
+            {
+                keyBuilder.Append(state[i].Part.PrimitiveIndex);
+                keyBuilder.Append(':');
+                keyBuilder.Append(state[i].Texture != null ? state[i].Texture.GetInstanceID() : 0);
+                keyBuilder.Append(';');
+            }
+
+            string key = keyBuilder.ToString();
+            int existing;
+            if (context.SetIndices.TryGetValue(key, out existing))
+                return existing;
+
+            PS3DS_TextureSwapper.TextureSwapSet set = new PS3DS_TextureSwapper.TextureSwapSet();
+            set.Entries = new PS3DS_TextureSwapper.TextureSwapEntry[state.Count];
+
+            for (int i = 0; i < state.Count; i++)
+            {
+                PS3DS_TextureSwapper.TextureSwapEntry entry =
+                    new PS3DS_TextureSwapper.TextureSwapEntry();
+                entry.Renderer = state[i].Part.Renderer;
+                entry.ToAllMaterials = false;
+                entry.MaterialIndices = new int[] { 0 };
+                entry.Texture = state[i].Texture;
+                entry.UseTexture = true;
+                entry.UseUV = false;
+                entry.Offset = Vector2.zero;
+                entry.Scale = Vector2.one;
+                set.Entries[i] = entry;
+            }
+
+            int index = context.Sets.Count;
+            context.Sets.Add(set);
+            context.SetIndices.Add(key, index);
+            return index;
+        }
+
+        private static void AssignTextureSwapSets(MaterialCallbackContext context)
+        {
+            if (context == null || context.Swapper == null)
+                return;
+
+            FieldInfo setsField = typeof(PS3DS_TextureSwapper).GetField(
+                "m_sets",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (setsField == null)
+            {
+                Debug.LogWarning("[Stadium2Unity] Could not assign PS3DS_TextureSwapper sets because m_sets was not found.");
+                return;
+            }
+
+            setsField.SetValue(context.Swapper, context.Sets.ToArray());
+            EditorUtility.SetDirty(context.Swapper);
+        }
+
         private static Material FindAnimatedMaterial(Dictionary<string, Material> materials, PrimitiveData source,
             int textureIndex, bool mirrorTextures)
         {
@@ -2166,7 +2398,18 @@ namespace VirtualPhenix.EditorTools
             return material;
         }
 
-        private static AnimationClip CreateClip(FragmentModel model, AnimationData source, Transform root, Transform[] pivots, Transform[] joints, bool legacy, List<PartBuildData> parts, Dictionary<string, Material> materials, bool mirrorTextures)
+        private static AnimationClip CreateClip(
+            FragmentModel model,
+            AnimationData source,
+            Transform root,
+            Transform[] pivots,
+            Transform[] joints,
+            bool legacy,
+            List<PartBuildData> parts,
+            Dictionary<string, Material> materials,
+            bool mirrorTextures,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode,
+            MaterialCallbackContext callbackContext)
         {
             AnimationClip clip = new AnimationClip();
             clip.frameRate = 30f;
@@ -2196,7 +2439,16 @@ namespace VirtualPhenix.EditorTools
                 clip.SetCurve(pivotPath, typeof(Transform), "localRotation.x", qx); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.y", qy); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.z", qz); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.w", qw);
                 clip.SetCurve(jointPath, typeof(Transform), "localScale.x", sx); clip.SetCurve(jointPath, typeof(Transform), "localScale.y", sy); clip.SetCurve(jointPath, typeof(Transform), "localScale.z", sz);
             }
-            AddMaterialAnimationCurves(model, source, clip, root, parts, materials, mirrorTextures);
+            AddMaterialAnimation(
+                model,
+                source,
+                clip,
+                root,
+                parts,
+                materials,
+                mirrorTextures,
+                materialAnimationMode,
+                callbackContext);
 
             AnimationClipSettings settings = AnimationUtility.GetAnimationClipSettings(clip); settings.loopTime = source.LoopStart < source.FrameCount; AnimationUtility.SetAnimationClipSettings(clip, settings);
             clip.EnsureQuaternionContinuity(); return clip;
