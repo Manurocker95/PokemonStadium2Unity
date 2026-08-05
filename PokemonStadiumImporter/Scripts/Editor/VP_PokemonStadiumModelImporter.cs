@@ -26,6 +26,7 @@ namespace VirtualPhenix.EditorTools
         private const string MirrorTexturesPref = "VP.PokemonStadiumImporter.MirrorTextures";
         private const string AnimationSystemPref = "VP.PokemonStadiumImporter.AnimationSystem";
         private const string InstantiatePrefabPref = "VP.PokemonStadiumImporter.InstantiatePrefab";
+        private const string CombinePartsPref = "VP.PokemonStadiumImporter.CombineParts";
 
         private enum ImportMode
         {
@@ -71,6 +72,7 @@ namespace VirtualPhenix.EditorTools
         private bool _mirrorTextures = true;
         private AnimationSystemMode _animationSystemMode = AnimationSystemMode.Mecanim;
         private bool _instantiatePrefab;
+        private bool _combineParts;
         private Vector2 _scroll;
 
         [MenuItem("VirtualPhenix/Pokemon Stadium/Model Importer")]
@@ -94,6 +96,7 @@ namespace VirtualPhenix.EditorTools
             _mirrorTextures = EditorPrefs.GetBool(MirrorTexturesPref, true);
             _animationSystemMode = (AnimationSystemMode)EditorPrefs.GetInt(AnimationSystemPref, (int)AnimationSystemMode.Mecanim);
             _instantiatePrefab = EditorPrefs.GetBool(InstantiatePrefabPref, false);
+            _combineParts = EditorPrefs.GetBool(CombinePartsPref, false);
         }
 
         private void OnGUI()
@@ -171,6 +174,7 @@ namespace VirtualPhenix.EditorTools
             EditorGUI.BeginDisabledGroup(!_createPrefab);
             _prefabRendererMode = (PrefabRendererMode)EditorGUILayout.EnumPopup("Prefab is", _prefabRendererMode);
             _instantiatePrefab = EditorGUILayout.ToggleLeft("Instantiate prefab in the current scene", _instantiatePrefab);
+            _combineParts = EditorGUILayout.ToggleLeft("Combine parts into one", _combineParts);
             EditorGUI.EndDisabledGroup();
             EditorGUI.EndDisabledGroup();
 
@@ -256,6 +260,7 @@ namespace VirtualPhenix.EditorTools
             EditorPrefs.SetBool(MirrorTexturesPref, _mirrorTextures);
             EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
             EditorPrefs.SetBool(InstantiatePrefabPref, _instantiatePrefab);
+            EditorPrefs.SetBool(CombinePartsPref, _combineParts);
 
             try
             {
@@ -307,6 +312,7 @@ namespace VirtualPhenix.EditorTools
                     try
                     {
                         FragmentModel model = FragmentParser.Parse(files[i], i);
+                        rom.AssignPreferredAuxAnimations(model);
                         if (model == null || model.Primitives.Count == 0)
                         {
                             skipped++;
@@ -328,7 +334,8 @@ namespace VirtualPhenix.EditorTools
                             _flipTexturesY,
                             _mirrorTextures,
                             _animationSystemMode,
-                            _instantiatePrefab);
+                            _instantiatePrefab,
+                            _combineParts);
                         imported++;
                     }
                     catch (Exception ex)
@@ -390,6 +397,12 @@ namespace VirtualPhenix.EditorTools
     internal sealed class PokemonStadiumRom
     {
         private const int PokemonModelsOffset = 0x920000;
+        private const int BattleDataOffset = 0x70D3A0;
+        private const int MainRomOffset = 0x1000;
+        private const int MainVram = unchecked((int)0x80000400);
+        private const int PointerTableVram = unchecked((int)0x80075BD0);
+        private const int BattleTableStride = 0xB90;
+        private const int BattleEntrySize = 0x10;
         private const string ExpectedMd5 = "ed1378bc12115f71209a77844965ba50";
         private readonly byte[] _data;
 
@@ -461,6 +474,60 @@ namespace VirtualPhenix.EditorTools
             return result;
         }
 
+
+        public void AssignPreferredAuxAnimations(FragmentModel model)
+        {
+            if (model == null || model.Species < 1 || model.Species > 151 || model.Animations.Count == 0)
+                return;
+
+            int pointerTable = MainRomOffset + (PointerTableVram - MainVram);
+            int pointerOffset = pointerTable + (model.Species - 1) * 4;
+            if (pointerOffset < 0 || pointerOffset + 4 > _data.Length)
+                return;
+
+            int relative = (int)(BigEndian.U32(_data, pointerOffset) & 0x00FFFFFFu);
+            int table = BattleDataOffset + relative;
+            if (table < 0 || table + BattleTableStride > _data.Length)
+                return;
+
+            Dictionary<int, Dictionary<int, int>> counts = new Dictionary<int, Dictionary<int, int>>();
+            int entries = BattleTableStride / BattleEntrySize;
+            for (int i = 0; i < entries; i++)
+            {
+                int offset = table + i * BattleEntrySize;
+                int animationIndex = _data[offset];
+                int auxIndex = _data[offset + 1] == 0xFF ? -1 : _data[offset + 1];
+                if (animationIndex < 0 || animationIndex >= model.Animations.Count ||
+                    auxIndex < 0 || auxIndex >= model.AuxAnimations.Count)
+                    continue;
+
+                Dictionary<int, int> auxCounts;
+                if (!counts.TryGetValue(animationIndex, out auxCounts))
+                {
+                    auxCounts = new Dictionary<int, int>();
+                    counts.Add(animationIndex, auxCounts);
+                }
+
+                int value;
+                auxCounts.TryGetValue(auxIndex, out value);
+                auxCounts[auxIndex] = value + 1;
+            }
+
+            foreach (KeyValuePair<int, Dictionary<int, int>> pair in counts)
+            {
+                int bestAux = -1;
+                int bestCount = -1;
+                foreach (KeyValuePair<int, int> candidate in pair.Value)
+                {
+                    if (candidate.Value > bestCount)
+                    {
+                        bestAux = candidate.Key;
+                        bestCount = candidate.Value;
+                    }
+                }
+                model.Animations[pair.Key].AuxAnimation = bestAux;
+            }
+        }
         private static byte[] Decompress(byte[] blob)
         {
             if (blob.Length >= 12 && Match(blob, 0, "PERS-SZP"))
@@ -633,6 +700,7 @@ namespace VirtualPhenix.EditorTools
         public int Texture = -1;
         public int Tlut = -1;
         public int MaterialDisplayList = -1;
+        public int TextureAnimation = -1;
         public int Cull;
         public bool MirrorS;
         public bool MirrorT;
@@ -658,9 +726,19 @@ namespace VirtualPhenix.EditorTools
         public Vector3[] Scale;
     }
 
+    internal sealed class AuxAnimationData
+    {
+        public int Index;
+        public int FrameCount;
+        public int LoopStart;
+        public byte Flags;
+        public int[][] Channels;
+    }
+
     internal sealed class AnimationData
     {
         public int Index;
+        public int AuxAnimation = -1;
         public int FrameCount;
         public int LoopStart;
         public TrackData[] Tracks;
@@ -682,6 +760,7 @@ namespace VirtualPhenix.EditorTools
         public readonly List<TlutRecord> Tluts = new List<TlutRecord>();
         public readonly List<PrimitiveData> Primitives = new List<PrimitiveData>();
         public readonly List<AnimationData> Animations = new List<AnimationData>();
+        public readonly List<AuxAnimationData> AuxAnimations = new List<AuxAnimationData>();
         public FragmentReader Reader;
     }
 
@@ -704,6 +783,7 @@ namespace VirtualPhenix.EditorTools
             model.Name = SpeciesNames.Get(model.Species);
             List<int> layouts = f.PtrList(f.Ptr(root + 8));
             List<int> animations = f.PtrList(f.Ptr(root + 0x0C));
+            List<int> auxAnimations = f.PtrList(f.Ptr(root + 0x10));
             if (layouts.Count == 0)
                 return model;
 
@@ -711,6 +791,8 @@ namespace VirtualPhenix.EditorTools
             state.Walk(layouts[0], 0);
             for (int i = 0; i < animations.Count; i++)
                 model.Animations.Add(ParseAnimation(model, animations[i], i));
+            for (int i = 0; i < auxAnimations.Count; i++)
+                model.AuxAnimations.Add(ParseAuxAnimation(model.Reader, auxAnimations[i], i));
             return model;
         }
 
@@ -725,6 +807,7 @@ namespace VirtualPhenix.EditorTools
             private int _currentTexture = -1;
             private int _currentTlut = -1;
             private int _currentMaterial = -1;
+            private int _currentTextureAnimation = -1;
             private readonly TileState[] _tiles = new TileState[8];
             private int _currentTile;
 
@@ -761,6 +844,7 @@ namespace VirtualPhenix.EditorTools
                     else if (command == 0x1D) ReadBone(offset);
                     else if (command == 0x23)
                     {
+                        _currentTextureAnimation = _f.S16(offset + 2);
                         _currentTexture = _f.S16(offset + 8);
                         _currentTlut = _f.S16(offset + 0x0A);
                         _currentMaterial = _f.Ptr(offset + 4);
@@ -953,7 +1037,7 @@ namespace VirtualPhenix.EditorTools
             private PrimitiveData GetPrimitive(int cull)
             {
                 TileState tile = _tiles[Mathf.Clamp(_currentTile, 0, _tiles.Length - 1)];
-                string key = _currentTexture + ":" + _currentTlut + ":" + _currentMaterial + ":" + cull + ":" +
+                string key = _currentTexture + ":" + _currentTlut + ":" + _currentMaterial + ":" + _currentTextureAnimation + ":" + cull + ":" +
                              tile.MirrorS + ":" + tile.MirrorT + ":" + tile.ClampS + ":" + tile.ClampT;
 
                 PrimitiveData primitive;
@@ -963,6 +1047,7 @@ namespace VirtualPhenix.EditorTools
                     primitive.Texture = _currentTexture;
                     primitive.Tlut = _currentTlut;
                     primitive.MaterialDisplayList = _currentMaterial;
+                    primitive.TextureAnimation = _currentTextureAnimation;
                     primitive.Cull = cull;
                     primitive.MirrorS = tile.MirrorS;
                     primitive.MirrorT = tile.MirrorT;
@@ -1090,7 +1175,7 @@ namespace VirtualPhenix.EditorTools
                 while (index < count - 2 && frame >= ReadKey(baseOffset, index + 1, wide).Frame) index++;
                 a = ReadKey(baseOffset, index, wide); Key b = ReadKey(baseOffset, index + 1, wide);
                 float x = (frame - a.Frame) / 30f; float y = 30f / (b.Frame - a.Frame); float x2 = x * x; float x3 = x2 * x; float y2 = y * y; float y3 = y2 * y;
-                return a.Value * (2f*x3*y3 - 3f*x2*y2 + 1f) + b.Value * (-2f*x3*y3 + 3f*x2*y2) + a.OutTangent * (x3*y2 - 2f*x2*y + x) + b.InTangent * (x3*y2 - x2*y);
+                return a.Value * (2f * x3 * y3 - 3f * x2 * y2 + 1f) + b.Value * (-2f * x3 * y3 + 3f * x2 * y2) + a.OutTangent * (x3 * y2 - 2f * x2 * y + x) + b.InTangent * (x3 * y2 - x2 * y);
             }
             private Key ReadKey(int baseOffset, int index, bool wide)
             {
@@ -1107,6 +1192,40 @@ namespace VirtualPhenix.EditorTools
             private static void Set(ref Vector3 v, int axis, float value) { if (axis == 0) v.x = value; else if (axis == 1) v.y = value; else v.z = value; }
             private sealed class Channel { public int NScale, NRotation, NTranslation, Interpolation, OScale, ORotation, OTranslation; }
             private sealed class Key { public int Frame; public float Value, InTangent, OutTangent; }
+        }
+
+        private static AuxAnimationData ParseAuxAnimation(FragmentReader reader, int offset, int index)
+        {
+            AuxAnimationData animation = new AuxAnimationData();
+            animation.Index = index;
+            animation.Flags = reader.U8(offset);
+            animation.LoopStart = reader.U16(offset + 6);
+            int channelCount = reader.U16(offset + 8);
+            animation.FrameCount = Math.Max((ushort)1, reader.U16(offset + 0x0A));
+            int channelTable = reader.Ptr(offset + 0x0C);
+            int data = reader.Ptr(offset + 0x10);
+            animation.Channels = new int[channelCount][];
+
+            if (channelTable < 0 || data < 0)
+                return animation;
+
+            for (int channel = 0; channel < channelCount; channel++)
+            {
+                int record = channelTable + channel * 4;
+                int count = reader.U16(record);
+                int baseIndex = reader.U16(record + 2);
+                int[] values = new int[animation.FrameCount];
+                for (int frame = 0; frame < values.Length; frame++)
+                {
+                    if (count == 0)
+                        values[frame] = -1;
+                    else
+                        values[frame] = reader.U8(data + baseIndex + Math.Min(frame, count - 1));
+                }
+                animation.Channels[channel] = values;
+            }
+
+            return animation;
         }
 
         private static AnimationData ParseAnimation(FragmentModel model, int offset, int index)
@@ -1135,10 +1254,21 @@ namespace VirtualPhenix.EditorTools
     {
         private const float PositionScale = 0.01f;
 
+        private sealed class PartBuildData
+        {
+            public int PrimitiveIndex;
+            public PrimitiveData Primitive;
+            public Mesh Mesh;
+            public Material Material;
+            public GameObject Object;
+            public Renderer Renderer;
+            public bool IsMaterialAnimated;
+        }
+
         public static void Write(FragmentModel model, string rootPath, int fileIndex, bool overwrite,
             VP_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
             VP_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
-            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab)
+            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab, bool combineParts)
         {
             string safeName = Sanitize(model.Name);
             string folderName = model.Species.ToString("000") + "_" + safeName;
@@ -1197,6 +1327,8 @@ namespace VirtualPhenix.EditorTools
                 if (exportTextures)
                     materials = CreateTextures(model, folder, createMaterials, flipTexturesY, mirrorTextures);
 
+                List<PartBuildData> builtParts = new List<PartBuildData>();
+
                 if (exportMeshes)
                 {
                     for (int p = 0; p < model.Primitives.Count; p++)
@@ -1229,7 +1361,24 @@ namespace VirtualPhenix.EditorTools
                             MeshRenderer renderer = part.AddComponent<MeshRenderer>();
                             AssignMaterial(renderer, primitive, materials);
                         }
+
+                        GameObject createdPart = root.transform.Find("Part_" + p.ToString("00")) != null
+                            ? root.transform.Find("Part_" + p.ToString("00")).gameObject
+                            : null;
+                        Renderer createdRenderer = createdPart != null ? createdPart.GetComponent<Renderer>() : null;
+                        PartBuildData partData = new PartBuildData();
+                        partData.PrimitiveIndex = p;
+                        partData.Primitive = primitive;
+                        partData.Mesh = mesh;
+                        partData.Object = createdPart;
+                        partData.Renderer = createdRenderer;
+                        partData.Material = createdRenderer != null ? createdRenderer.sharedMaterial : null;
+                        partData.IsMaterialAnimated = primitive.TextureAnimation >= 0;
+                        builtParts.Add(partData);
                     }
+
+                    if (prefabRequested && combineParts)
+                        CreateCombinedPart(model, folder, root.transform, joints, skinnedPrefab, builtParts);
                 }
 
                 if (exportAnimations)
@@ -1251,7 +1400,7 @@ namespace VirtualPhenix.EditorTools
                     for (int i = 0; i < model.Animations.Count; i++)
                     {
                         bool legacyClip = animationSystemMode == VP_PokemonStadiumModelImporter.AnimationSystemMode.Legacy;
-                        AnimationClip clip = CreateClip(model, model.Animations[i], root.transform, pivots, joints, legacyClip);
+                        AnimationClip clip = CreateClip(model, model.Animations[i], root.transform, pivots, joints, legacyClip, builtParts, materials, mirrorTextures);
                         clip.name = "Animation_" + i.ToString("00");
                         string clipPath = folder + "/Animations/" + clip.name + ".anim";
                         AssetDatabase.CreateAsset(clip, clipPath);
@@ -1401,34 +1550,28 @@ namespace VirtualPhenix.EditorTools
                     mirrorTextures && source.MirrorT);
             }
 
-            if (mirrorTextures)
+            for (int primitiveIndex = 0; primitiveIndex < model.Primitives.Count; primitiveIndex++)
             {
-                for (int primitiveIndex = 0; primitiveIndex < model.Primitives.Count; primitiveIndex++)
+                PrimitiveData source = model.Primitives[primitiveIndex];
+                if (source.TextureAnimation < 0)
+                    continue;
+
+                for (int auxIndex = 0; auxIndex < model.AuxAnimations.Count; auxIndex++)
                 {
-                    PrimitiveData source = model.Primitives[primitiveIndex];
-                    if (source.Texture < 0 || source.Texture >= model.Textures.Count)
+                    AuxAnimationData auxiliary = model.AuxAnimations[auxIndex];
+                    if (source.TextureAnimation >= auxiliary.Channels.Length)
                         continue;
-                    if (!source.MirrorS && !source.MirrorT)
+                    int[] track = auxiliary.Channels[source.TextureAnimation];
+                    if (track == null)
                         continue;
-
-                    TextureRecord sourceTexture = model.Textures[source.Texture];
-
-                    for (int textureIndex = 0; textureIndex < model.Textures.Count; textureIndex++)
+                    for (int frame = 0; frame < track.Length; frame++)
                     {
-                        TextureRecord candidate = model.Textures[textureIndex];
-                        if (!AreAnimationTextureFramesCompatible(sourceTexture, candidate))
+                        int textureIndex = track[frame];
+                        if (textureIndex < 0 || textureIndex >= model.Textures.Count)
                             continue;
-
-                        int tlut = FindTlutForTexture(model, textureIndex);
-                        if (tlut < 0)
-                            tlut = source.Tlut;
-
-                        AddTextureVariant(
-                            variants,
-                            textureIndex,
-                            tlut,
-                            source.MirrorS,
-                            source.MirrorT);
+                        AddTextureVariant(variants, textureIndex, source.Tlut,
+                            mirrorTextures && source.MirrorS,
+                            mirrorTextures && source.MirrorT);
                     }
                 }
             }
@@ -1595,15 +1738,15 @@ namespace VirtualPhenix.EditorTools
             int w = texture.Width;
             int h = texture.Height;
             Color32[] p = texture.Pixels;
-            for(int y=0;y<h/2;y++)
+            for (int y = 0; y < h / 2; y++)
             {
-                int a=y*w;
-                int b=(h-1-y)*w;
-                for(int x=0;x<w;x++)
+                int a = y * w;
+                int b = (h - 1 - y) * w;
+                for (int x = 0; x < w; x++)
                 {
-                    Color32 t=p[a+x];
-                    p[a+x]=p[b+x];
-                    p[b+x]=t;
+                    Color32 t = p[a + x];
+                    p[a + x] = p[b + x];
+                    p[b + x] = t;
                 }
             }
         }
@@ -1684,7 +1827,165 @@ namespace VirtualPhenix.EditorTools
             return mesh;
         }
 
-        private static AnimationClip CreateClip(FragmentModel model, AnimationData source, Transform root, Transform[] pivots, Transform[] joints, bool legacy)
+        private static void CreateCombinedPart(FragmentModel model, string folder, Transform root, Transform[] bones, bool skinned, List<PartBuildData> parts)
+        {
+            List<PartBuildData> sources = new List<PartBuildData>();
+            for (int i = 0; i < parts.Count; i++)
+                if (!parts[i].IsMaterialAnimated && parts[i].Mesh != null && parts[i].Renderer != null)
+                    sources.Add(parts[i]);
+
+            if (sources.Count < 2)
+                return;
+
+            Mesh combined = CombineMeshes(sources, bones, root, skinned);
+            combined.name = "Mesh_Combined";
+            AssetDatabase.CreateAsset(combined, folder + "/Meshes/Mesh_Combined.asset");
+
+            GameObject combinedObject = new GameObject("Part_Combined");
+            combinedObject.transform.SetParent(root, false);
+            Material[] combinedMaterials = new Material[sources.Count];
+            for (int i = 0; i < sources.Count; i++)
+                combinedMaterials[i] = sources[i].Material;
+
+            if (skinned)
+            {
+                SkinnedMeshRenderer renderer = combinedObject.AddComponent<SkinnedMeshRenderer>();
+                renderer.sharedMesh = combined;
+                renderer.bones = bones;
+                renderer.rootBone = root;
+                renderer.sharedMaterials = combinedMaterials;
+            }
+            else
+            {
+                MeshFilter filter = combinedObject.AddComponent<MeshFilter>();
+                filter.sharedMesh = combined;
+                MeshRenderer renderer = combinedObject.AddComponent<MeshRenderer>();
+                renderer.sharedMaterials = combinedMaterials;
+            }
+
+            for (int i = 0; i < sources.Count; i++)
+            {
+                if (sources[i].Object != null)
+                    UnityEngine.Object.DestroyImmediate(sources[i].Object);
+                parts.Remove(sources[i]);
+            }
+        }
+
+        private static Mesh CombineMeshes(List<PartBuildData> sources, Transform[] bones, Transform root, bool skinned)
+        {
+            List<Vector3> vertices = new List<Vector3>();
+            List<Vector3> normals = new List<Vector3>();
+            List<Vector2> uv = new List<Vector2>();
+            List<Color32> colors = new List<Color32>();
+            List<BoneWeight> weights = new List<BoneWeight>();
+            List<int[]> submeshes = new List<int[]>();
+
+            for (int i = 0; i < sources.Count; i++)
+            {
+                Mesh mesh = sources[i].Mesh;
+                int baseVertex = vertices.Count;
+                vertices.AddRange(mesh.vertices);
+                normals.AddRange(mesh.normals);
+                uv.AddRange(mesh.uv);
+                colors.AddRange(mesh.colors32);
+                if (skinned)
+                    weights.AddRange(mesh.boneWeights);
+
+                int[] indices = mesh.triangles;
+                for (int n = 0; n < indices.Length; n++)
+                    indices[n] += baseVertex;
+                submeshes.Add(indices);
+            }
+
+            Mesh combined = new Mesh();
+            combined.vertices = vertices.ToArray();
+            combined.normals = normals.ToArray();
+            combined.uv = uv.ToArray();
+            combined.colors32 = colors.ToArray();
+            combined.subMeshCount = submeshes.Count;
+            for (int i = 0; i < submeshes.Count; i++)
+                combined.SetTriangles(submeshes[i], i);
+
+            if (skinned)
+            {
+                combined.boneWeights = weights.ToArray();
+                Matrix4x4[] bindPoses = new Matrix4x4[bones.Length];
+                for (int i = 0; i < bones.Length; i++)
+                    bindPoses[i] = bones[i].worldToLocalMatrix * root.localToWorldMatrix;
+                combined.bindposes = bindPoses;
+            }
+
+            combined.RecalculateBounds();
+            return combined;
+        }
+
+        private static void AddMaterialAnimationCurves(FragmentModel model, AnimationData source, AnimationClip clip,
+            Transform root, List<PartBuildData> parts, Dictionary<string, Material> materials, bool mirrorTextures)
+        {
+            if (source.AuxAnimation < 0 || source.AuxAnimation >= model.AuxAnimations.Count || materials == null)
+                return;
+
+            AuxAnimationData auxiliary = model.AuxAnimations[source.AuxAnimation];
+            for (int i = 0; i < parts.Count; i++)
+            {
+                PartBuildData part = parts[i];
+                int channel = part.Primitive.TextureAnimation;
+                if (channel < 0 || channel >= auxiliary.Channels.Length || part.Renderer == null)
+                    continue;
+
+                int[] track = auxiliary.Channels[channel];
+                if (track == null || track.Length == 0)
+                    continue;
+
+                List<ObjectReferenceKeyframe> keys = new List<ObjectReferenceKeyframe>();
+                Material previous = null;
+                for (int frame = 0; frame < track.Length; frame++)
+                {
+                    int textureIndex = track[frame];
+                    Material material = FindAnimatedMaterial(materials, part.Primitive, textureIndex, mirrorTextures);
+                    if (material == null || material == previous)
+                        continue;
+
+                    ObjectReferenceKeyframe key = new ObjectReferenceKeyframe();
+                    key.time = frame / 30f;
+                    key.value = material;
+                    keys.Add(key);
+                    previous = material;
+                }
+
+                if (keys.Count == 0)
+                    continue;
+
+                EditorCurveBinding binding = new EditorCurveBinding();
+                binding.path = AnimationUtility.CalculateTransformPath(part.Renderer.transform, root);
+                binding.type = part.Renderer.GetType();
+                binding.propertyName = "m_Materials.Array.data[0]";
+                AnimationUtility.SetObjectReferenceCurve(clip, binding, keys.ToArray());
+            }
+        }
+
+        private static Material FindAnimatedMaterial(Dictionary<string, Material> materials, PrimitiveData source,
+            int textureIndex, bool mirrorTextures)
+        {
+            PrimitiveData key = new PrimitiveData();
+            key.Texture = textureIndex;
+            key.Tlut = source.Tlut;
+            key.ClampS = true;
+            key.ClampT = true;
+            key.MirrorS = mirrorTextures && source.MirrorS;
+            key.MirrorT = mirrorTextures && source.MirrorT;
+
+            Material material;
+            if (materials.TryGetValue(GetTextureVariantKey(key), out material))
+                return material;
+
+            key.MirrorS = false;
+            key.MirrorT = false;
+            materials.TryGetValue(GetTextureVariantKey(key), out material);
+            return material;
+        }
+
+        private static AnimationClip CreateClip(FragmentModel model, AnimationData source, Transform root, Transform[] pivots, Transform[] joints, bool legacy, List<PartBuildData> parts, Dictionary<string, Material> materials, bool mirrorTextures)
         {
             AnimationClip clip = new AnimationClip();
             clip.frameRate = 30f;
@@ -1714,6 +2015,8 @@ namespace VirtualPhenix.EditorTools
                 clip.SetCurve(pivotPath, typeof(Transform), "localRotation.x", qx); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.y", qy); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.z", qz); clip.SetCurve(pivotPath, typeof(Transform), "localRotation.w", qw);
                 clip.SetCurve(jointPath, typeof(Transform), "localScale.x", sx); clip.SetCurve(jointPath, typeof(Transform), "localScale.y", sy); clip.SetCurve(jointPath, typeof(Transform), "localScale.z", sz);
             }
+            AddMaterialAnimationCurves(model, source, clip, root, parts, materials, mirrorTextures);
+
             AnimationClipSettings settings = AnimationUtility.GetAnimationClipSettings(clip); settings.loopTime = source.LoopStart < source.FrameCount; AnimationUtility.SetAnimationClipSettings(clip, settings);
             clip.EnsureQuaternionContinuity(); return clip;
         }
@@ -1730,7 +2033,8 @@ namespace VirtualPhenix.EditorTools
             else if (m00 > m11 && m00 > m22) { s = Math.Sqrt(1.0 + m00 - m11 - m22) * 2.0; qw = (m21 - m12) / s; qx = 0.25 * s; qy = (m01 + m10) / s; qz = (m02 + m20) / s; }
             else if (m11 > m22) { s = Math.Sqrt(1.0 + m11 - m00 - m22) * 2.0; qw = (m02 - m20) / s; qx = (m01 + m10) / s; qy = 0.25 * s; qz = (m12 + m21) / s; }
             else { s = Math.Sqrt(1.0 + m22 - m00 - m11) * 2.0; qw = (m10 - m01) / s; qx = (m02 + m20) / s; qy = (m12 + m21) / s; qz = 0.25 * s; }
-            Quaternion q = new Quaternion((float)qx, (float)qy, (float)qz, (float)qw); float length = Mathf.Sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w); if (length > 0f) { q.x/=length; q.y/=length; q.z/=length; q.w/=length; } return q;
+            Quaternion q = new Quaternion((float)qx, (float)qy, (float)qz, (float)qw); float length = Mathf.Sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w); if (length > 0f) { q.x /= length; q.y /= length; q.z /= length; q.w /= length; }
+            return q;
         }
 
         internal static DecodedTexture DecodeTextureForJson(FragmentModel model, int index, int tlutIndex) { return DecodeTexture(model, index, tlutIndex, 0); }
@@ -2050,6 +2354,7 @@ namespace VirtualPhenix.EditorTools
     {
         private static readonly string[] Names = ("Unknown Bulbasaur Ivysaur Venusaur Charmander Charmeleon Charizard Squirtle Wartortle Blastoise Caterpie Metapod Butterfree Weedle Kakuna Beedrill Pidgey Pidgeotto Pidgeot Rattata Raticate Spearow Fearow Ekans Arbok Pikachu Raichu Sandshrew Sandslash NidoranF Nidorina Nidoqueen NidoranM Nidorino Nidoking Clefairy Clefable Vulpix Ninetales Jigglypuff Wigglytuff Zubat Golbat Oddish Gloom Vileplume Paras Parasect Venonat Venomoth Diglett Dugtrio Meowth Persian Psyduck Golduck Mankey Primeape Growlithe Arcanine Poliwag Poliwhirl Poliwrath Abra Kadabra Alakazam Machop Machoke Machamp Bellsprout Weepinbell Victreebel Tentacool Tentacruel Geodude Graveler Golem Ponyta Rapidash Slowpoke Slowbro Magnemite Magneton Farfetchd Doduo Dodrio Seel Dewgong Grimer Muk Shellder Cloyster Gastly Haunter Gengar Onix Drowzee Hypno Krabby Kingler Voltorb Electrode Exeggcute Exeggutor Cubone Marowak Hitmonlee Hitmonchan Lickitung Koffing Weezing Rhyhorn Rhydon Chansey Tangela Kangaskhan Horsea Seadra Goldeen Seaking Staryu Starmie MrMime Scyther Jynx Electabuzz Magmar Pinsir Tauros Magikarp Gyarados Lapras Ditto Eevee Vaporeon Jolteon Flareon Porygon Omanyte Omastar Kabuto Kabutops Aerodactyl Snorlax Articuno Zapdos Moltres Dratini Dragonair Dragonite Mewtwo Mew").Split(' ');
         public static string Get(int species) { return species >= 1 && species < Names.Length ? Names[species] : "Species" + species; }
+
     }
 }
 #endif
