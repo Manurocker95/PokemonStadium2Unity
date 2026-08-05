@@ -27,12 +27,19 @@ namespace VirtualPhenix.EditorTools
         private const string AnimationSystemPref = "VP.PokemonStadiumImporter.AnimationSystem";
         private const string InstantiatePrefabPref = "VP.PokemonStadiumImporter.InstantiatePrefab";
         private const string CombinePartsPref = "VP.PokemonStadiumImporter.CombineParts";
+        private const string PokemonNamePref = "VP.PokemonStadiumImporter.PokemonName";
+        private const string MaterialShaderPref = "VP.PokemonStadiumImporter.MaterialShader";
+        private const string VertexColorsGrayscalePref = "VP.PokemonStadiumImporter.VertexColorsGrayscale";
+        private const string ImportVertexColorsPref = "VP.PokemonStadiumImporter.ImportVertexColors";
+        private const string VertexColorLuminancePref = "VP.PokemonStadiumImporter.VertexColorLuminance";
+        private const string AnimatedVertexColorStrengthPref = "VP.PokemonStadiumImporter.AnimatedVertexColorStrength";
 
         private enum ImportMode
         {
             All,
             MainPokemon,
             SpecialModels,
+            ByPokemonName,
             SingleIndex,
             IndexRange
         }
@@ -65,6 +72,7 @@ namespace VirtualPhenix.EditorTools
         private int _singleIndex;
         private int _rangeStart;
         private int _rangeEnd = 15;
+        private int _pokemonSpecies = 1;
         private ContentMode _contentMode = ContentMode.Everything;
         private bool _createPrefab = true;
         private PrefabRendererMode _prefabRendererMode = PrefabRendererMode.SkinnedRenderer;
@@ -73,6 +81,11 @@ namespace VirtualPhenix.EditorTools
         private AnimationSystemMode _animationSystemMode = AnimationSystemMode.Mecanim;
         private bool _instantiatePrefab;
         private bool _combineParts;
+        private Shader _materialShader;
+        private bool _vertexColorsAsGrayscale = true;
+        private bool _importVertexColors = true;
+        private float _vertexColorLuminance = 1.0f;
+        private float _animatedVertexColorStrength = 1.0f;
         private Vector2 _scroll;
 
         [MenuItem("VirtualPhenix/Pokemon Stadium/Model Importer")]
@@ -89,6 +102,7 @@ namespace VirtualPhenix.EditorTools
             _singleIndex = EditorPrefs.GetInt(SingleIndexPref, 0);
             _rangeStart = EditorPrefs.GetInt(RangeStartPref, 0);
             _rangeEnd = EditorPrefs.GetInt(RangeEndPref, 15);
+            _pokemonSpecies = Mathf.Clamp(EditorPrefs.GetInt(PokemonNamePref, 1), 1, 151);
             _contentMode = (ContentMode)EditorPrefs.GetInt(ContentModePref, (int)ContentMode.Everything);
             _createPrefab = EditorPrefs.GetBool(CreatePrefabPref, true);
             _prefabRendererMode = (PrefabRendererMode)EditorPrefs.GetInt(PrefabRendererPref, (int)PrefabRendererMode.SkinnedRenderer);
@@ -97,6 +111,17 @@ namespace VirtualPhenix.EditorTools
             _animationSystemMode = (AnimationSystemMode)EditorPrefs.GetInt(AnimationSystemPref, (int)AnimationSystemMode.Mecanim);
             _instantiatePrefab = EditorPrefs.GetBool(InstantiatePrefabPref, false);
             _combineParts = EditorPrefs.GetBool(CombinePartsPref, false);
+            _vertexColorsAsGrayscale = EditorPrefs.GetBool(VertexColorsGrayscalePref, true);
+            _importVertexColors = EditorPrefs.GetBool(ImportVertexColorsPref, true);
+            _vertexColorLuminance = Mathf.Clamp(EditorPrefs.GetFloat(VertexColorLuminancePref, 0.63f), 0.01f, 1.0f);
+            _animatedVertexColorStrength = Mathf.Clamp(EditorPrefs.GetFloat(AnimatedVertexColorStrengthPref, 0.4f), 0.01f, 1.0f);
+
+            string shaderName = EditorPrefs.GetString(MaterialShaderPref, "N3DS/N64_StadiumLit");
+            _materialShader = Shader.Find(shaderName);
+            if (_materialShader == null)
+                _materialShader = Shader.Find("N3DS/N64_StadiumLit");
+            if (_materialShader == null)
+                _materialShader = GetDefaultMaterialShader();
         }
 
         private void OnGUI()
@@ -124,6 +149,12 @@ namespace VirtualPhenix.EditorTools
             else if (_importMode == ImportMode.SpecialModels)
             {
                 EditorGUILayout.HelpBox("Imports special models whose internal species ID is between 152 and 213, including model variants.", MessageType.None);
+            }
+            else if (_importMode == ImportMode.ByPokemonName)
+            {
+                string[] pokemonNames = SpeciesNames.GetMainPokemonDisplayNames();
+                _pokemonSpecies = EditorGUILayout.Popup("Pokemon", Mathf.Clamp(_pokemonSpecies - 1, 0, pokemonNames.Length - 1), pokemonNames) + 1;
+                EditorGUILayout.HelpBox("Imports every archive entry whose internal species ID matches the selected Pokemon.", MessageType.None);
             }
             else if (_importMode == ImportMode.SingleIndex)
             {
@@ -157,6 +188,21 @@ namespace VirtualPhenix.EditorTools
                 EditorGUILayout.HelpBox("Creates meshes, textures, materials and legacy animation clips.", MessageType.None);
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Materials", EditorStyles.boldLabel);
+            _materialShader = (Shader)EditorGUILayout.ObjectField("Material shader", _materialShader, typeof(Shader), false);
+            _importVertexColors = EditorGUILayout.ToggleLeft("Import vertex colors", _importVertexColors);
+            EditorGUI.BeginDisabledGroup(!_importVertexColors);
+            _vertexColorsAsGrayscale = EditorGUILayout.ToggleLeft("Vertex Colors as Grayscale", _vertexColorsAsGrayscale);
+            EditorGUI.BeginDisabledGroup(!_vertexColorsAsGrayscale);
+            _vertexColorLuminance = EditorGUILayout.Slider("Vertex color strength", _vertexColorLuminance, 0.01f, 1.0f);
+            _animatedVertexColorStrength = EditorGUILayout.Slider("Animated material strength", _animatedVertexColorStrength, 0.01f, 1.0f);
+            EditorGUI.EndDisabledGroup();
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.HelpBox(
+                "Defaults to N3DS/N64_StadiumLit when available. The first strength controls normal parts. Animated material strength controls texture-animated parts such as eyes. Both preserve the original alpha.",
+                MessageType.None);
+
+            EditorGUILayout.Space();
             EditorGUILayout.LabelField("Animation system", EditorStyles.boldLabel);
             _animationSystemMode = (AnimationSystemMode)EditorGUILayout.EnumPopup("Animation type", _animationSystemMode);
             if (_animationSystemMode == AnimationSystemMode.Mecanim)
@@ -186,6 +232,7 @@ namespace VirtualPhenix.EditorTools
                 EditorGUILayout.HelpBox("Creates a bone hierarchy and SkinnedMeshRenderer components. Animation clips are attached only when importing Everything.", MessageType.None);
 
             EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Textures", EditorStyles.boldLabel);
             _flipTexturesY = EditorGUILayout.ToggleLeft("Flip textures vertically (Y)", _flipTexturesY);
             _mirrorTextures = EditorGUILayout.ToggleLeft("Mirror textures when required by the model", _mirrorTextures);
             EditorGUILayout.HelpBox(
@@ -193,7 +240,6 @@ namespace VirtualPhenix.EditorTools
                 MessageType.None);
             EditorGUILayout.Space();
 
-            EditorGUILayout.Space();
             EditorGUI.BeginDisabledGroup(string.IsNullOrEmpty(_romPath) || string.IsNullOrEmpty(_outputPath));
             if (GUILayout.Button(GetImportButtonLabel(), GUILayout.Height(38f)))
             {
@@ -238,6 +284,8 @@ namespace VirtualPhenix.EditorTools
                 return "Import main Pokemon (001-151)";
             if (_importMode == ImportMode.SpecialModels)
                 return "Import special models (152-213)";
+            if (_importMode == ImportMode.ByPokemonName)
+                return "Import " + SpeciesNames.Get(_pokemonSpecies);
             if (_importMode == ImportMode.SingleIndex)
                 return "Import model index " + _singleIndex;
             if (_importMode == ImportMode.IndexRange)
@@ -253,6 +301,7 @@ namespace VirtualPhenix.EditorTools
             EditorPrefs.SetInt(SingleIndexPref, _singleIndex);
             EditorPrefs.SetInt(RangeStartPref, _rangeStart);
             EditorPrefs.SetInt(RangeEndPref, _rangeEnd);
+            EditorPrefs.SetInt(PokemonNamePref, _pokemonSpecies);
             EditorPrefs.SetInt(ContentModePref, (int)_contentMode);
             EditorPrefs.SetBool(CreatePrefabPref, _createPrefab);
             EditorPrefs.SetInt(PrefabRendererPref, (int)_prefabRendererMode);
@@ -261,6 +310,11 @@ namespace VirtualPhenix.EditorTools
             EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
             EditorPrefs.SetBool(InstantiatePrefabPref, _instantiatePrefab);
             EditorPrefs.SetBool(CombinePartsPref, _combineParts);
+            EditorPrefs.SetString(MaterialShaderPref, _materialShader != null ? _materialShader.name : string.Empty);
+            EditorPrefs.SetBool(VertexColorsGrayscalePref, _vertexColorsAsGrayscale);
+            EditorPrefs.SetBool(ImportVertexColorsPref, _importVertexColors);
+            EditorPrefs.SetFloat(VertexColorLuminancePref, _vertexColorLuminance);
+            EditorPrefs.SetFloat(AnimatedVertexColorStrengthPref, _animatedVertexColorStrength);
 
             try
             {
@@ -289,10 +343,15 @@ namespace VirtualPhenix.EditorTools
                     lastIndex = _rangeEnd;
                 }
 
-                if (firstIndex < 0 || firstIndex >= files.Count)
-                    throw new IndexOutOfRangeException("The first selected index is outside the archive. Valid indices are 0 to " + (files.Count - 1) + ".");
-                if (lastIndex < 0 || lastIndex >= files.Count)
-                    throw new IndexOutOfRangeException("The last selected index is outside the archive. Valid indices are 0 to " + (files.Count - 1) + ".");
+                if (firstIndex < 0 || firstIndex >= files.Count ||
+                    lastIndex < 0 || lastIndex >= files.Count)
+                {
+                    EditorUtility.DisplayDialog(
+                        "Pokemon Stadium Importer",
+                        "The selected index or range is outside the archive. Valid indices are 0 to " + (files.Count - 1) + ".",
+                        "OK");
+                    return;
+                }
 
                 int selectedCount = lastIndex - firstIndex + 1;
                 int imported = 0;
@@ -335,7 +394,12 @@ namespace VirtualPhenix.EditorTools
                             _mirrorTextures,
                             _animationSystemMode,
                             _instantiatePrefab,
-                            _combineParts);
+                            _combineParts,
+                            _materialShader,
+                            _vertexColorsAsGrayscale,
+                            _importVertexColors,
+                            _vertexColorLuminance,
+                            _animatedVertexColorStrength);
                         imported++;
                     }
                     catch (Exception ex)
@@ -374,7 +438,21 @@ namespace VirtualPhenix.EditorTools
                 return species >= 1 && species <= 151;
             if (_importMode == ImportMode.SpecialModels)
                 return species >= 152 && species <= 213;
+            if (_importMode == ImportMode.ByPokemonName)
+                return species == _pokemonSpecies;
             return true;
+        }
+
+        private static Shader GetDefaultMaterialShader()
+        {
+#if UNITY_2017_1_OR_NEWER
+            Shader shader = Shader.Find("Standard");
+#else
+            Shader shader = Shader.Find("Legacy Shaders/VertexLit");
+#endif
+            if (shader == null)
+                shader = Shader.Find("Unlit/Texture");
+            return shader;
         }
 
         internal static void EnsureAssetFolder(string path)
@@ -1201,7 +1279,7 @@ namespace VirtualPhenix.EditorTools
             animation.Flags = reader.U8(offset);
             animation.LoopStart = reader.U16(offset + 6);
             int channelCount = reader.U16(offset + 8);
-            animation.FrameCount = Math.Max((ushort)1, reader.U16(offset + 0x0A));
+            animation.FrameCount = Math.Max(1, (int)reader.U16(offset + 0x0A));
             int channelTable = reader.Ptr(offset + 0x0C);
             int data = reader.Ptr(offset + 0x10);
             animation.Channels = new int[channelCount][];
@@ -1268,7 +1346,9 @@ namespace VirtualPhenix.EditorTools
         public static void Write(FragmentModel model, string rootPath, int fileIndex, bool overwrite,
             VP_PokemonStadiumModelImporter.ContentMode contentMode, bool createPrefab,
             VP_PokemonStadiumModelImporter.PrefabRendererMode prefabRendererMode, bool generateJson, bool flipTexturesY,
-            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab, bool combineParts)
+            bool mirrorTextures, VP_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode, bool instantiatePrefab, bool combineParts,
+            Shader materialShader, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance,
+            float animatedVertexColorStrength)
         {
             string safeName = Sanitize(model.Name);
             string folderName = model.Species.ToString("000") + "_" + safeName;
@@ -1309,7 +1389,7 @@ namespace VirtualPhenix.EditorTools
 
             if (contentMode == VP_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
             {
-                CreateTextures(model, folder, false, flipTexturesY, mirrorTextures);
+                CreateTextures(model, folder, false, flipTexturesY, mirrorTextures, materialShader);
                 return;
             }
 
@@ -1325,7 +1405,7 @@ namespace VirtualPhenix.EditorTools
 
                 Dictionary<string, Material> materials = null;
                 if (exportTextures)
-                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, mirrorTextures);
+                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, mirrorTextures, materialShader);
 
                 List<PartBuildData> builtParts = new List<PartBuildData>();
 
@@ -1336,7 +1416,7 @@ namespace VirtualPhenix.EditorTools
                         PrimitiveData primitive = model.Primitives[p];
                         if (primitive.Indices.Count == 0) continue;
 
-                        Mesh mesh = CreateMesh(model, primitive, joints, root.transform, skinnedPrefab, mirrorTextures);
+                        Mesh mesh = CreateMesh(model, primitive, joints, root.transform, skinnedPrefab, mirrorTextures, vertexColorsAsGrayscale, importVertexColors, vertexColorLuminance, animatedVertexColorStrength);
                         mesh.name = "Mesh_" + p.ToString("00");
                         string meshPath = folder + "/Meshes/" + mesh.name + ".asset";
                         AssetDatabase.CreateAsset(mesh, meshPath);
@@ -1378,7 +1458,7 @@ namespace VirtualPhenix.EditorTools
                     }
 
                     if (prefabRequested && combineParts)
-                        CreateCombinedPart(model, folder, root.transform, joints, skinnedPrefab, builtParts);
+                        CreateCombinedPart(model, folder, root.transform, joints, skinnedPrefab, builtParts, vertexColorsAsGrayscale, importVertexColors, vertexColorLuminance);
                 }
 
                 if (exportAnimations)
@@ -1513,7 +1593,7 @@ namespace VirtualPhenix.EditorTools
             renderer.sharedMaterial = material;
         }
 
-        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool mirrorTextures)
+        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool mirrorTextures, Shader materialShader)
         {
             Dictionary<string, Material> materials = createMaterials
                 ? new Dictionary<string, Material>()
@@ -1522,7 +1602,16 @@ namespace VirtualPhenix.EditorTools
             Shader shader = null;
             if (createMaterials)
             {
-                shader = Shader.Find("Unlit/Transparent Cutout");
+                shader = materialShader;
+                if (shader == null)
+                    shader = Shader.Find("N3DS/N64_StadiumLit");
+#if UNITY_2017_1_OR_NEWER
+                if (shader == null)
+                    shader = Shader.Find("Standard");
+#else
+                if (shader == null)
+                    shader = Shader.Find("Legacy Shaders/VertexLit");
+#endif
                 if (shader == null)
                     shader = Shader.Find("Unlit/Texture");
             }
@@ -1757,7 +1846,7 @@ namespace VirtualPhenix.EditorTools
             return -1;
         }
 
-        private static Mesh CreateMesh(FragmentModel model, PrimitiveData primitive, Transform[] bones, Transform root, bool includeSkinning, bool mirrorTextures)
+        private static Mesh CreateMesh(FragmentModel model, PrimitiveData primitive, Transform[] bones, Transform root, bool includeSkinning, bool mirrorTextures, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance, float animatedVertexColorStrength)
         {
             Mesh mesh = new Mesh();
             int count = primitive.Vertices.Count;
@@ -1812,7 +1901,14 @@ namespace VirtualPhenix.EditorTools
             mesh.vertices = vertices;
             mesh.normals = normals;
             mesh.uv = uv;
-            mesh.colors32 = colors;
+            if (importVertexColors && colors.Length == mesh.vertexCount && HasMeaningfulVertexColors(colors))
+            {
+                mesh.colors32 = colors;
+                FixMeshVertexColors(
+                    mesh,
+                    vertexColorsAsGrayscale,
+                    primitive.TextureAnimation >= 0 ? animatedVertexColorStrength : vertexColorLuminance);
+            }
             mesh.triangles = primitive.Indices.ToArray();
             if (includeSkinning && bones != null && bones.Length > 0)
             {
@@ -1827,7 +1923,78 @@ namespace VirtualPhenix.EditorTools
             return mesh;
         }
 
-        private static void CreateCombinedPart(FragmentModel model, string folder, Transform root, Transform[] bones, bool skinned, List<PartBuildData> parts)
+        private static void FixMeshVertexColors(
+            Mesh mesh,
+            bool grayscale,
+            float luminanceMultiplier)
+        {
+            if (mesh == null)
+                return;
+
+            luminanceMultiplier = Mathf.Clamp(luminanceMultiplier, 0.01f, 1.0f);
+
+            int vertexCount = mesh.vertexCount;
+            if (vertexCount <= 0)
+                return;
+
+            Color32[] source = mesh.colors32;
+            if (source == null || source.Length != vertexCount || !HasMeaningfulVertexColors(source))
+                return;
+
+            Color32[] fixedColors = new Color32[vertexCount];
+
+            if (source.Length == vertexCount)
+            {
+                for (int i = 0; i < vertexCount; i++)
+                {
+                    Color32 color = source[i];
+
+                    if (grayscale)
+                    {
+                        byte gray = (byte)Mathf.Clamp(
+                            Mathf.RoundToInt(
+                                color.r * 0.299f +
+                                color.g * 0.587f +
+                                color.b * 0.114f),
+                            0,
+                            255);
+
+                        gray = (byte)Mathf.RoundToInt(
+                            Mathf.Lerp(255.0f, gray, luminanceMultiplier));
+
+                        fixedColors[i] = new Color32(gray, gray, gray, color.a);
+                    }
+                    else
+                    {
+                        fixedColors[i] = new Color32(color.r, color.g, color.b, color.a);
+                    }
+                }
+            }
+            else
+            {
+                return;
+            }
+
+            mesh.colors32 = fixedColors;
+            EditorUtility.SetDirty(mesh);
+        }
+
+        private static bool HasMeaningfulVertexColors(Color32[] colors)
+        {
+            if (colors == null || colors.Length == 0)
+                return false;
+
+            for (int i = 0; i < colors.Length; i++)
+            {
+                Color32 color = colors[i];
+                if (color.r != 0 || color.g != 0 || color.b != 0 || color.a != 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void CreateCombinedPart(FragmentModel model, string folder, Transform root, Transform[] bones, bool skinned, List<PartBuildData> parts, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance)
         {
             List<PartBuildData> sources = new List<PartBuildData>();
             for (int i = 0; i < parts.Count; i++)
@@ -1837,7 +2004,7 @@ namespace VirtualPhenix.EditorTools
             if (sources.Count < 2)
                 return;
 
-            Mesh combined = CombineMeshes(sources, bones, root, skinned);
+            Mesh combined = CombineMeshes(sources, bones, root, skinned, vertexColorsAsGrayscale, importVertexColors, vertexColorLuminance);
             combined.name = "Mesh_Combined";
             AssetDatabase.CreateAsset(combined, folder + "/Meshes/Mesh_Combined.asset");
 
@@ -1871,7 +2038,7 @@ namespace VirtualPhenix.EditorTools
             }
         }
 
-        private static Mesh CombineMeshes(List<PartBuildData> sources, Transform[] bones, Transform root, bool skinned)
+        private static Mesh CombineMeshes(List<PartBuildData> sources, Transform[] bones, Transform root, bool skinned, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance)
         {
             List<Vector3> vertices = new List<Vector3>();
             List<Vector3> normals = new List<Vector3>();
@@ -1887,7 +2054,14 @@ namespace VirtualPhenix.EditorTools
                 vertices.AddRange(mesh.vertices);
                 normals.AddRange(mesh.normals);
                 uv.AddRange(mesh.uv);
-                colors.AddRange(mesh.colors32);
+                if (importVertexColors)
+                {
+                    Color32[] meshColors = mesh.colors32;
+                    if (meshColors != null && meshColors.Length == mesh.vertexCount && HasMeaningfulVertexColors(meshColors))
+                        colors.AddRange(meshColors);
+                    else
+                        importVertexColors = false;
+                }
                 if (skinned)
                     weights.AddRange(mesh.boneWeights);
 
@@ -1901,7 +2075,14 @@ namespace VirtualPhenix.EditorTools
             combined.vertices = vertices.ToArray();
             combined.normals = normals.ToArray();
             combined.uv = uv.ToArray();
-            combined.colors32 = colors.ToArray();
+            if (importVertexColors && colors.Count == combined.vertexCount && HasMeaningfulVertexColors(colors.ToArray()))
+            {
+                combined.colors32 = colors.ToArray();
+                FixMeshVertexColors(
+                    combined,
+                    vertexColorsAsGrayscale,
+                    vertexColorLuminance);
+            }
             combined.subMeshCount = submeshes.Count;
             for (int i = 0; i < submeshes.Count; i++)
                 combined.SetTriangles(submeshes[i], i);
@@ -2355,6 +2536,13 @@ namespace VirtualPhenix.EditorTools
         private static readonly string[] Names = ("Unknown Bulbasaur Ivysaur Venusaur Charmander Charmeleon Charizard Squirtle Wartortle Blastoise Caterpie Metapod Butterfree Weedle Kakuna Beedrill Pidgey Pidgeotto Pidgeot Rattata Raticate Spearow Fearow Ekans Arbok Pikachu Raichu Sandshrew Sandslash NidoranF Nidorina Nidoqueen NidoranM Nidorino Nidoking Clefairy Clefable Vulpix Ninetales Jigglypuff Wigglytuff Zubat Golbat Oddish Gloom Vileplume Paras Parasect Venonat Venomoth Diglett Dugtrio Meowth Persian Psyduck Golduck Mankey Primeape Growlithe Arcanine Poliwag Poliwhirl Poliwrath Abra Kadabra Alakazam Machop Machoke Machamp Bellsprout Weepinbell Victreebel Tentacool Tentacruel Geodude Graveler Golem Ponyta Rapidash Slowpoke Slowbro Magnemite Magneton Farfetchd Doduo Dodrio Seel Dewgong Grimer Muk Shellder Cloyster Gastly Haunter Gengar Onix Drowzee Hypno Krabby Kingler Voltorb Electrode Exeggcute Exeggutor Cubone Marowak Hitmonlee Hitmonchan Lickitung Koffing Weezing Rhyhorn Rhydon Chansey Tangela Kangaskhan Horsea Seadra Goldeen Seaking Staryu Starmie MrMime Scyther Jynx Electabuzz Magmar Pinsir Tauros Magikarp Gyarados Lapras Ditto Eevee Vaporeon Jolteon Flareon Porygon Omanyte Omastar Kabuto Kabutops Aerodactyl Snorlax Articuno Zapdos Moltres Dratini Dragonair Dragonite Mewtwo Mew").Split(' ');
         public static string Get(int species) { return species >= 1 && species < Names.Length ? Names[species] : "Species" + species; }
 
+        public static string[] GetMainPokemonDisplayNames()
+        {
+            string[] result = new string[151];
+            for (int i = 1; i <= 151; i++)
+                result[i - 1] = i.ToString("000") + " - " + Get(i);
+            return result;
+        }
     }
 }
 #endif
