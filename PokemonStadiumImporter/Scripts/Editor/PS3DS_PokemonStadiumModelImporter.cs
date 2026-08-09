@@ -37,6 +37,17 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         private const string VertexColorLuminancePref = "VP.PokemonStadiumImporter.VertexColorLuminance";
         private const string AnimatedVertexColorStrengthPref = "VP.PokemonStadiumImporter.AnimatedVertexColorStrength";
         private const string MaterialAnimationModePref = "VP.PokemonStadiumImporter.MaterialAnimationMode";
+        private const string ExportShinyPref = "VP.PokemonStadiumImporter.ExportShiny";
+        private const string ApplyShinyMaterialsPref = "VP.PokemonStadiumImporter.ApplyShinyMaterials";
+        private const string ExportColorVariantPref = "VP.PokemonStadiumImporter.ExportColorVariant";
+        private const string ApplyColorVariantPref = "VP.PokemonStadiumImporter.ApplyColorVariant";
+        private const string ColorVariantModePref = "VP.PokemonStadiumImporter.ColorVariantMode";
+        private const string VariantTrainerIdPref = "VP.PokemonStadiumImporter.VariantTrainerId";
+        private const string VariantTrainerNamePref = "VP.PokemonStadiumImporter.VariantTrainerName";
+        private const string VariantNicknamePref = "VP.PokemonStadiumImporter.VariantNickname";
+        private const string VariantManualHuePref = "VP.PokemonStadiumImporter.VariantManualHue";
+        private const string OverridePreviousVariantPref = "VP.PokemonStadiumImporter.OverridePreviousVariant";
+        private const string VerboseVariantsPref = "VP.PokemonStadiumImporter.VerboseVariants";
 
         private enum ImportMode
         {
@@ -75,6 +86,13 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             ByCallback
         }
 
+        internal enum ColorVariantMode
+        {
+            Random,
+            TrainerData,
+            ManualHue
+        }
+
         private string _romPath;
         private string _outputPath = "Assets/PokemonStadium1/Exported/Models";
         private bool _overwrite = true;
@@ -98,6 +116,31 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         private bool _importVertexColors = true;
         private float _vertexColorLuminance = 1.0f;
         private float _animatedVertexColorStrength = 1.0f;
+        private bool _exportShiny;
+        private bool _applyShinyMaterials;
+        private bool _exportColorVariant;
+        private bool _applyColorVariant;
+        private ColorVariantMode _colorVariantMode = ColorVariantMode.Random;
+        private int _variantTrainerId;
+        private string _variantTrainerName = string.Empty;
+        private string _variantNickname = string.Empty;
+        private int _variantManualHue;
+        private bool _overridePreviousVariant = true;
+        private bool _verboseVariants = false;
+
+        private static readonly string[] TrainerPresetNames =
+        {
+            "Rojo", "Azul", "Verde", "Brock", "Misty", "Lt. Surge", "Erika",
+            "Koga", "Sabrina", "Blaine", "Giovanni", "Chano", "Lorelei",
+            "Bruno", "Agatha", "Lance", "Oak", "Jessie", "James"
+        };
+
+        private static readonly string[] TrainerPresetNicknames =
+        {
+            "ACE", "BUDDY", "CHAMP", "LUCKY", "NOVA", "SPARK", "PIXEL",
+            "COMET", "FLASH", "STAR", "N64", "STADIUM"
+        };
+
         private Vector2 _scroll;
 
         [MenuItem("Stadium2Unity/Model Importer")]
@@ -129,6 +172,17 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             _importVertexColors = EditorPrefs.GetBool(ImportVertexColorsPref, true);
             _vertexColorLuminance = Mathf.Clamp(EditorPrefs.GetFloat(VertexColorLuminancePref, 0.63f), 0.01f, 1.0f);
             _animatedVertexColorStrength = Mathf.Clamp(EditorPrefs.GetFloat(AnimatedVertexColorStrengthPref, 0.4f), 0.01f, 1.0f);
+            _exportShiny = EditorPrefs.GetBool(ExportShinyPref, false);
+            _applyShinyMaterials = EditorPrefs.GetBool(ApplyShinyMaterialsPref, false);
+            _exportColorVariant = EditorPrefs.GetBool(ExportColorVariantPref, false);
+            _applyColorVariant = EditorPrefs.GetBool(ApplyColorVariantPref, false);
+            _colorVariantMode = (ColorVariantMode)EditorPrefs.GetInt(ColorVariantModePref, (int)ColorVariantMode.Random);
+            _variantTrainerId = Mathf.Clamp(EditorPrefs.GetInt(VariantTrainerIdPref, 0), 0, 65535);
+            _variantTrainerName = EditorPrefs.GetString(VariantTrainerNamePref, string.Empty);
+            _variantNickname = EditorPrefs.GetString(VariantNicknamePref, string.Empty);
+            _variantManualHue = Mathf.Clamp(EditorPrefs.GetInt(VariantManualHuePref, 0), -180, 180);
+            _overridePreviousVariant = EditorPrefs.GetBool(OverridePreviousVariantPref, true);
+            _verboseVariants = EditorPrefs.GetBool(VerboseVariantsPref, true);
 
             string shaderName = EditorPrefs.GetString(MaterialShaderPref, "N3DS/N64_StadiumLit");
             _materialShader = Shader.Find(shaderName);
@@ -215,6 +269,47 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             EditorGUILayout.HelpBox(
                 "Defaults to N3DS/N64_StadiumLit when available. The first strength controls normal parts. Animated material strength controls texture-animated parts such as eyes. Both preserve the original alpha.",
                 MessageType.None);
+            _exportShiny = EditorGUILayout.ToggleLeft("Export shiny", _exportShiny);
+            EditorGUI.BeginDisabledGroup(!_exportShiny);
+            _applyShinyMaterials = EditorGUILayout.ToggleLeft("Apply shiny materials", _applyShinyMaterials);
+            EditorGUI.EndDisabledGroup();
+            if (!_exportShiny)
+                _applyShinyMaterials = false;
+            EditorGUILayout.HelpBox(
+                "Exports the Stadium shiny recolor for species 001-151. Most species use Stadium's HSL hue/saturation/lightness slide; Clefairy, Clefable, Jigglypuff, Wigglytuff and Gyarados use exact color LUTs. Apply shiny materials makes the generated prefab and material animations reference the shiny assets.",
+                MessageType.None);
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Stadium color variant", EditorStyles.boldLabel);
+            _exportColorVariant = EditorGUILayout.ToggleLeft("Export color variant", _exportColorVariant);
+            EditorGUI.BeginDisabledGroup(!_exportColorVariant);
+            _overridePreviousVariant = EditorGUILayout.ToggleLeft("Override previous variant", _overridePreviousVariant);
+            _verboseVariants = EditorGUILayout.ToggleLeft("Verbose Variants offsets", _verboseVariants);
+            _applyColorVariant = EditorGUILayout.ToggleLeft("Apply color variant materials", _applyColorVariant);
+            EditorGUILayout.BeginHorizontal();
+            _colorVariantMode = (ColorVariantMode)EditorGUILayout.EnumPopup("Variant mode", _colorVariantMode);
+            if (GUILayout.Button("Randomize Trainer Data", GUILayout.Width(175f)))
+                RandomizeTrainerData();
+            EditorGUILayout.EndHorizontal();
+            if (_colorVariantMode == ColorVariantMode.TrainerData)
+            {
+                _variantTrainerId = Mathf.Clamp(EditorGUILayout.IntField("Trainer ID", _variantTrainerId), 0, 65535);
+                _variantTrainerName = EditorGUILayout.TextField("Trainer name", _variantTrainerName);
+                _variantNickname = EditorGUILayout.TextField("Pokemon nickname", _variantNickname);
+            }
+            else if (_colorVariantMode == ColorVariantMode.ManualHue)
+            {
+                _variantManualHue = EditorGUILayout.IntSlider("Manual hue", _variantManualHue, -180, 180);
+                EditorGUILayout.HelpBox("Applies the selected hue shift directly. This mode is not limited to the species Stadium nickname hue range, so it can also be used for custom color experiments.", MessageType.None);
+            }
+            EditorGUI.EndDisabledGroup();
+            if (!_exportColorVariant)
+                _applyColorVariant = false;
+            if (_applyColorVariant)
+                _applyShinyMaterials = false;
+            EditorGUILayout.HelpBox(
+                "Random chooses one hue inside the species' real Stadium hue range for each imported model. Trainer Data reproduces Stadium's deterministic nickname coloration from Trainer ID + Trainer name + Pokemon nickname. Manual Hue applies a direct -180..180 degree hue shift. Color variant materials take precedence over shiny materials when applied.",
+                MessageType.None);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Animation system", EditorStyles.boldLabel);
@@ -255,7 +350,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Textures", EditorStyles.boldLabel);
             _flipTexturesY = EditorGUILayout.ToggleLeft("Flip textures vertically (Y)", _flipTexturesY);
-            _flipTexturesX = EditorGUILayout.ToggleLeft("Flip textures vertically (X)", _flipTexturesX);
+            _flipTexturesX = EditorGUILayout.ToggleLeft("Flip textures horizontally (X)", _flipTexturesX);
             _mirrorTextures = EditorGUILayout.ToggleLeft("Mirror textures when required by the model", _mirrorTextures);
             EditorGUILayout.HelpBox(
                 "Normal textures remain clamped. When mirror is enabled, G_SETTILE mirror flags create native per-axis mirror on Unity 2017.1+ or baked mirror variants on Unity 5.6.",
@@ -267,13 +362,37 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             {
                 ImportSelection();
             }
+
+            EditorGUI.BeginDisabledGroup(!_exportColorVariant);
+            if (GUILayout.Button("Import Variant", GUILayout.Height(32f)))
+            {
+                ImportVariantOnly();
+            }
             EditorGUI.EndDisabledGroup();
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.HelpBox(
+                "Import Variant adds only a new numbered color variant to an already imported model. It never overwrites or recreates the normal prefab, normal textures, shiny assets, meshes or base animations.",
+                MessageType.None);
 
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(
                 "Expected ROM: Pokemon Stadium (USA). Other revisions may use different archive offsets and are rejected unless their layout still matches.",
                 MessageType.Warning);
             EditorGUILayout.EndScrollView();
+        }
+
+        private void RandomizeTrainerData()
+        {
+            _colorVariantMode = ColorVariantMode.TrainerData;
+            _variantTrainerName = TrainerPresetNames[UnityEngine.Random.Range(0, TrainerPresetNames.Length)];
+            _variantTrainerId = UnityEngine.Random.Range(0, 65536);
+
+            if (_importMode == ImportMode.ByPokemonName && _pokemonSpecies >= 1 && _pokemonSpecies <= 151)
+                _variantNickname = SpeciesNames.Get(_pokemonSpecies).ToUpperInvariant();
+            else
+                _variantNickname = TrainerPresetNicknames[UnityEngine.Random.Range(0, TrainerPresetNicknames.Length)];
+
+            Repaint();
         }
 
         private static void DrawPathField(string label, ref string value, bool folder)
@@ -339,6 +458,17 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             EditorPrefs.SetBool(ImportVertexColorsPref, _importVertexColors);
             EditorPrefs.SetFloat(VertexColorLuminancePref, _vertexColorLuminance);
             EditorPrefs.SetFloat(AnimatedVertexColorStrengthPref, _animatedVertexColorStrength);
+            EditorPrefs.SetBool(ExportShinyPref, _exportShiny);
+            EditorPrefs.SetBool(ApplyShinyMaterialsPref, _applyShinyMaterials);
+            EditorPrefs.SetBool(ExportColorVariantPref, _exportColorVariant);
+            EditorPrefs.SetBool(ApplyColorVariantPref, _applyColorVariant);
+            EditorPrefs.SetInt(ColorVariantModePref, (int)_colorVariantMode);
+            EditorPrefs.SetInt(VariantTrainerIdPref, _variantTrainerId);
+            EditorPrefs.SetString(VariantTrainerNamePref, _variantTrainerName ?? string.Empty);
+            EditorPrefs.SetString(VariantNicknamePref, _variantNickname ?? string.Empty);
+            EditorPrefs.SetInt(VariantManualHuePref, _variantManualHue);
+            EditorPrefs.SetBool(OverridePreviousVariantPref, _overridePreviousVariant);
+            EditorPrefs.SetBool(VerboseVariantsPref, _verboseVariants);
 
             try
             {
@@ -425,7 +555,18 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                             _vertexColorsAsGrayscale,
                             _importVertexColors,
                             _vertexColorLuminance,
-                            _animatedVertexColorStrength);
+                            _animatedVertexColorStrength,
+                            _exportShiny,
+                            _applyShinyMaterials,
+                            _exportColorVariant,
+                            _applyColorVariant,
+                            _colorVariantMode,
+                            _variantTrainerId,
+                            _variantTrainerName,
+                            _variantNickname,
+                            _variantManualHue,
+                            _overridePreviousVariant,
+                            _verboseVariants);
                         imported++;
                     }
                     catch (Exception ex)
@@ -451,6 +592,153 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             {
                 Debug.LogException(ex);
                 EditorUtility.DisplayDialog("Stadium2Unity Importer", ex.Message, "OK");
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+        }
+
+        private void ImportVariantOnly()
+        {
+            EditorPrefs.SetString(RomPref, _romPath);
+            EditorPrefs.SetString(OutputPref, _outputPath);
+            EditorPrefs.SetInt(ImportModePref, (int)_importMode);
+            EditorPrefs.SetInt(SingleIndexPref, _singleIndex);
+            EditorPrefs.SetInt(RangeStartPref, _rangeStart);
+            EditorPrefs.SetInt(RangeEndPref, _rangeEnd);
+            EditorPrefs.SetInt(PokemonNamePref, _pokemonSpecies);
+            EditorPrefs.SetBool(InstantiatePrefabPref, _instantiatePrefab);
+            EditorPrefs.SetInt(AnimationSystemPref, (int)_animationSystemMode);
+            EditorPrefs.SetInt(MaterialAnimationModePref, (int)_materialAnimationMode);
+            EditorPrefs.SetBool(FlipTexturesYPref, _flipTexturesY);
+            EditorPrefs.SetBool(FlipTexturesXPref, _flipTexturesX);
+            EditorPrefs.SetBool(MirrorTexturesPref, _mirrorTextures);
+            EditorPrefs.SetString(MaterialShaderPref, _materialShader != null ? _materialShader.name : string.Empty);
+            EditorPrefs.SetBool(ExportColorVariantPref, _exportColorVariant);
+            EditorPrefs.SetBool(ApplyColorVariantPref, _applyColorVariant);
+            EditorPrefs.SetInt(ColorVariantModePref, (int)_colorVariantMode);
+            EditorPrefs.SetInt(VariantTrainerIdPref, _variantTrainerId);
+            EditorPrefs.SetString(VariantTrainerNamePref, _variantTrainerName ?? string.Empty);
+            EditorPrefs.SetString(VariantNicknamePref, _variantNickname ?? string.Empty);
+            EditorPrefs.SetInt(VariantManualHuePref, _variantManualHue);
+            EditorPrefs.SetBool(VerboseVariantsPref, _verboseVariants);
+
+            try
+            {
+                if (!_outputPath.Replace('\\', '/').StartsWith("Assets/", StringComparison.Ordinal) && _outputPath != "Assets")
+                    throw new InvalidOperationException("The output folder must be inside Assets.");
+                if (!File.Exists(_romPath))
+                    throw new FileNotFoundException("ROM file not found.", _romPath);
+                if (_importMode == ImportMode.IndexRange && _rangeStart > _rangeEnd)
+                    throw new InvalidOperationException("The first range index cannot be greater than the last index.");
+
+                PokemonStadiumRom rom = new PokemonStadiumRom(_romPath);
+                List<byte[]> files = rom.ReadPokemonModelArchive();
+
+                int firstIndex = 0;
+                int lastIndex = files.Count - 1;
+                if (_importMode == ImportMode.SingleIndex)
+                {
+                    firstIndex = _singleIndex;
+                    lastIndex = _singleIndex;
+                }
+                else if (_importMode == ImportMode.IndexRange)
+                {
+                    firstIndex = _rangeStart;
+                    lastIndex = _rangeEnd;
+                }
+
+                if (firstIndex < 0 || firstIndex >= files.Count || lastIndex < 0 || lastIndex >= files.Count)
+                {
+                    EditorUtility.DisplayDialog(
+                        "Stadium2Unity Importer",
+                        "The selected index or range is outside the archive. Valid indices are 0 to " + (files.Count - 1) + ".",
+                        "OK");
+                    return;
+                }
+
+                int selectedCount = lastIndex - firstIndex + 1;
+                int imported = 0;
+                int missingBase = 0;
+                int skipped = 0;
+                bool cancelled = false;
+
+                for (int i = firstIndex; i <= lastIndex; i++)
+                {
+                    int selectionOffset = i - firstIndex;
+                    float progress = selectedCount == 0 ? 1f : (float)selectionOffset / selectedCount;
+                    if (EditorUtility.DisplayCancelableProgressBar(
+                        "Pokemon Stadium variant import",
+                        "Creating variant for archive file " + i + " (" + (selectionOffset + 1) + "/" + selectedCount + ")",
+                        progress))
+                    {
+                        cancelled = true;
+                        break;
+                    }
+
+                    try
+                    {
+                        FragmentModel model = FragmentParser.Parse(files[i], i);
+                        rom.AssignPreferredAuxAnimations(model);
+                        if (model == null || model.Primitives.Count == 0)
+                        {
+                            skipped++;
+                            continue;
+                        }
+                        if (!MatchesSpeciesPreset(model.Species))
+                            continue;
+
+                        if (UnityModelWriter.ImportVariantOnly(
+                            model,
+                            _outputPath,
+                            i,
+                            _flipTexturesY,
+                            _flipTexturesX,
+                            _mirrorTextures,
+                            _materialShader,
+                            _colorVariantMode,
+                            _variantTrainerId,
+                            _variantTrainerName,
+                            _variantNickname,
+                            _variantManualHue,
+                            _animationSystemMode,
+                            _materialAnimationMode,
+                            _instantiatePrefab,
+                            _applyColorVariant,
+                            _verboseVariants))
+                        {
+                            imported++;
+                        }
+                        else
+                        {
+                            missingBase++;
+                            Debug.LogWarning("[Stadium2Unity Variant] Base normal prefab was not found for " + model.Species.ToString("000") + " " + model.Name + ". Import the model normally once before using Import Variant.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        skipped++;
+                        Debug.LogWarning("[VP Pokemon Stadium Importer] Variant for file " + i + " skipped: " + ex.Message);
+                    }
+                }
+
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+
+                string result = "Created " + imported + " new variant(s).";
+                if (missingBase > 0)
+                    result += "\n" + missingBase + " model(s) had no existing normal prefab.";
+                if (skipped > 0)
+                    result += "\nSkipped " + skipped + " entries.";
+                if (cancelled)
+                    result += "\nThe operation was cancelled before completing the selection.";
+                EditorUtility.DisplayDialog("Stadium2Unity Import Variant", result, "OK");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+                EditorUtility.DisplayDialog("Stadium2Unity Import Variant", ex.Message, "OK");
             }
             finally
             {
@@ -806,6 +1094,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         public int MaterialDisplayList = -1;
         public int TextureAnimation = -1;
         public int Cull;
+        public int Palette;
         public bool MirrorS;
         public bool MirrorT;
         public bool ClampS;
@@ -817,6 +1106,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
     internal sealed class TileState
     {
+        public int Palette;
         public bool MirrorS;
         public bool MirrorT;
         public bool ClampS;
@@ -912,6 +1202,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             private int _currentTlut = -1;
             private int _currentMaterial = -1;
             private int _currentTextureAnimation = -1;
+            private int _currentPalette;
             private readonly TileState[] _tiles = new TileState[8];
             private int _currentTile;
 
@@ -952,6 +1243,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                         _currentTexture = _f.S16(offset + 8);
                         _currentTlut = _f.S16(offset + 0x0A);
                         _currentMaterial = _f.Ptr(offset + 4);
+                        _currentPalette = ReadMaterialPalette(_currentMaterial);
                         ApplyMaterialDisplayList(_currentMaterial);
                     }
                     else if (command == 0x22) RunDisplayList(_f.Ptr(offset + 4), CurrentBone(), 0);
@@ -1020,6 +1312,31 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 _stack[_stack.Count - 1] = index;
             }
 
+            private int ReadMaterialPalette(int offset)
+            {
+                if (offset < 0)
+                    return 0;
+
+                int palette = 0;
+                int guard = 0;
+
+                while (offset >= 0 && offset + 8 <= _f.Data.Length && guard++ < 16)
+                {
+                    uint w0 = _f.U32(offset);
+                    uint w1 = _f.U32(offset + 4);
+                    int op = (int)(w0 >> 24);
+
+                    if (op == 0xF5 && ((w1 >> 24) & 0x07) == 0)
+                        palette = (int)((w1 >> 20) & 0x0F);
+                    else if (op == 0xDF)
+                        break;
+
+                    offset += 8;
+                }
+
+                return palette;
+            }
+
             private void ApplyMaterialDisplayList(int offset)
             {
                 if (offset < 0)
@@ -1050,6 +1367,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                         int cms = (int)((w1 >> 8) & 0x03);
 
                         TileState tile = _tiles[tileIndex];
+                        tile.Palette = (int)((w1 >> 20) & 0x0F);
                         tile.MirrorS = (cms & 1) != 0;
                         tile.ClampS = (cms & 2) != 0;
                         tile.MirrorT = (cmt & 1) != 0;
@@ -1123,6 +1441,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                         int cms = (int)((w1 >> 8) & 0x03);
 
                         TileState tile = _tiles[tileIndex];
+                        tile.Palette = (int)((w1 >> 20) & 0x0F);
                         tile.MirrorS = (cms & 1) != 0;
                         tile.ClampS = (cms & 2) != 0;
                         tile.MirrorT = (cmt & 1) != 0;
@@ -1142,7 +1461,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             {
                 TileState tile = _tiles[Mathf.Clamp(_currentTile, 0, _tiles.Length - 1)];
                 string key = _currentTexture + ":" + _currentTlut + ":" + _currentMaterial + ":" + _currentTextureAnimation + ":" + cull + ":" +
-                             tile.MirrorS + ":" + tile.MirrorT + ":" + tile.ClampS + ":" + tile.ClampT;
+                             _currentPalette + ":" + tile.MirrorS + ":" + tile.MirrorT + ":" + tile.ClampS + ":" + tile.ClampT;
 
                 PrimitiveData primitive;
                 if (!_primitiveMap.TryGetValue(key, out primitive))
@@ -1153,6 +1472,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                     primitive.MaterialDisplayList = _currentMaterial;
                     primitive.TextureAnimation = _currentTextureAnimation;
                     primitive.Cull = cull;
+                    primitive.Palette = _currentPalette;
                     primitive.MirrorS = tile.MirrorS;
                     primitive.MirrorT = tile.MirrorT;
                     primitive.ClampS = tile.ClampS;
@@ -1390,11 +1710,30 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             bool mirrorTextures, PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
             PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode, bool instantiatePrefab, bool combineParts,
             Shader materialShader, bool vertexColorsAsGrayscale, bool importVertexColors, float vertexColorLuminance,
-            float animatedVertexColorStrength)
+            float animatedVertexColorStrength, bool exportShiny, bool applyShinyMaterials,
+            bool exportColorVariant, bool applyColorVariant,
+            PS3DS_PokemonStadiumModelImporter.ColorVariantMode colorVariantMode,
+            int variantTrainerId, string variantTrainerName, string variantNickname, int variantManualHue,
+            bool overridePreviousVariant, bool verboseVariants)
         {
             string safeName = Sanitize(model.Name);
             string folderName = model.Species.ToString("000") + "_" + safeName;
             string folder = rootPath.TrimEnd('/') + "/" + folderName;
+
+            if (verboseVariants && exportColorVariant)
+            {
+                LogShinyDiagnostics(model, folder+"/verbose");
+            }
+
+            if (AssetDatabase.IsValidFolder(folder) && exportColorVariant && !overridePreviousVariant)
+            {
+                if (TryAppendNumberedVariant(
+                    model, folder, folderName, fileIndex, flipTexturesY, _flipTexturesX, mirrorTextures,
+                    materialShader, colorVariantMode, variantTrainerId, variantTrainerName, variantNickname,
+                    variantManualHue, animationSystemMode, materialAnimationMode, instantiatePrefab, applyColorVariant))
+                    return;
+            }
+
             if (AssetDatabase.IsValidFolder(folder))
             {
                 if (!overwrite) return;
@@ -1425,13 +1764,23 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             if (exportTextures)
                 PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Textures");
             if (createMaterials)
+            {
                 PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Materials");
+                if (exportShiny)
+                    PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Materials/Shiny");
+            }
+            if (exportTextures && exportShiny)
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Textures/Shiny");
+            if (createMaterials && exportColorVariant)
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Materials/Variants");
+            if (exportTextures && exportColorVariant)
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Textures/Variants");
             if (exportAnimations)
                 PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/Animations");
 
             if (contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.TexturesOnly)
             {
-                CreateTextures(model, folder, false, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader);
+                CreateTextures(model, folder, false, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader, exportShiny, applyShinyMaterials, exportColorVariant, applyColorVariant, colorVariantMode, variantTrainerId, variantTrainerName, variantNickname, variantManualHue, fileIndex);
                 return;
             }
 
@@ -1447,7 +1796,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
 
                 Dictionary<string, Material> materials = null;
                 if (exportTextures)
-                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader);
+                    materials = CreateTextures(model, folder, createMaterials, flipTexturesY, _flipTexturesX, mirrorTextures, materialShader, exportShiny, applyShinyMaterials, exportColorVariant, applyColorVariant, colorVariantMode, variantTrainerId, variantTrainerName, variantNickname, variantManualHue, fileIndex);
 
                 List<PartBuildData> builtParts = new List<PartBuildData>();
 
@@ -1585,14 +1934,94 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                     string prefabPath = folder + "/" + folderName + ".prefab";
                     GameObject prefabAsset = PrefabUtility.CreatePrefab(prefabPath, root, ReplacePrefabOptions.ReplaceNameBased);
 
-                    if (instantiatePrefab && prefabAsset != null)
+                    GameObject shinyPrefabAsset = null;
+                    if (exportShiny && model.Species >= 1 && model.Species <= 151)
                     {
-                        GameObject instance = PrefabUtility.InstantiatePrefab(prefabAsset) as GameObject;
-                        if (instance != null)
+                        shinyPrefabAsset = CreateShinyCompanionPrefab(
+                            root,
+                            folder,
+                            folderName,
+                            animationSystemMode,
+                            materialAnimationMode);
+                    }
+
+                    int resolvedVariantHue = 0;
+                    bool hasResolvedVariant = false;
+                    if (exportColorVariant && model.Species >= 1 && model.Species <= 151)
+                    {
+                        if (colorVariantMode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.TrainerData)
+                            hasResolvedVariant = TryCalculateTrainerVariantHue(model.Species, variantTrainerId, variantTrainerName, variantNickname, out resolvedVariantHue);
+                        else if (colorVariantMode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.ManualHue)
                         {
-                            Undo.RegisterCreatedObjectUndo(instance, "Instantiate Pokemon Stadium model");
-                            instance.name = folderName;
-                            Selection.activeGameObject = instance;
+                            resolvedVariantHue = Mathf.Clamp(variantManualHue, -180, 180);
+                            hasResolvedVariant = true;
+                        }
+                        else
+                            hasResolvedVariant = TryCalculateRandomVariantHue(model.Species, fileIndex, out resolvedVariantHue);
+                    }
+
+                    GameObject variantPrefabAsset = null;
+                    if (hasResolvedVariant)
+                    {
+                        variantPrefabAsset = CreateVariantCompanionPrefab(
+                            root,
+                            folder,
+                            folderName,
+                            resolvedVariantHue,
+                            animationSystemMode,
+                            materialAnimationMode);
+                    }
+
+                    if (instantiatePrefab)
+                    {
+                        bool usesShinyLut = PS3DS_PokemonStadiumShinyData.GetLut(model.Species) != null;
+
+                        if (usesShinyLut && applyShinyMaterials && shinyPrefabAsset != null &&
+                            applyColorVariant && variantPrefabAsset != null)
+                        {
+                            GameObject shinyInstance = InstantiatePrefabAsset(
+                                shinyPrefabAsset,
+                                folderName + "_Shiny",
+                                "Instantiate shiny Pokemon Stadium model");
+
+                            GameObject variantInstance = InstantiatePrefabAsset(
+                                variantPrefabAsset,
+                                folderName + "_Variant",
+                                "Instantiate variant Pokemon Stadium model");
+
+                            if (variantInstance != null)
+                            {
+                                if (shinyInstance != null)
+                                    variantInstance.transform.position += Vector3.right * 2.0f;
+                                Selection.activeGameObject = variantInstance;
+                            }
+                            else if (shinyInstance != null)
+                            {
+                                Selection.activeGameObject = shinyInstance;
+                            }
+                        }
+                        else
+                        {
+                            GameObject prefabToInstantiate = prefabAsset;
+                            string instanceName = folderName;
+                            string undoName = "Instantiate Pokemon Stadium model";
+
+                            if (applyColorVariant && variantPrefabAsset != null)
+                            {
+                                prefabToInstantiate = variantPrefabAsset;
+                                instanceName = folderName + "_Variant";
+                                undoName = "Instantiate variant Pokemon Stadium model";
+                            }
+                            else if (applyShinyMaterials && shinyPrefabAsset != null)
+                            {
+                                prefabToInstantiate = shinyPrefabAsset;
+                                instanceName = folderName + "_Shiny";
+                                undoName = "Instantiate shiny Pokemon Stadium model";
+                            }
+
+                            GameObject instance = InstantiatePrefabAsset(prefabToInstantiate, instanceName, undoName);
+                            if (instance != null)
+                                Selection.activeGameObject = instance;
                         }
                     }
                 }
@@ -1601,6 +2030,1005 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             {
                 UnityEngine.Object.DestroyImmediate(root);
             }
+        }
+
+        private static GameObject InstantiatePrefabAsset(GameObject prefabAsset, string instanceName, string undoName)
+        {
+            if (prefabAsset == null)
+                return null;
+
+            GameObject instance = PrefabUtility.InstantiatePrefab(prefabAsset) as GameObject;
+            if (instance == null)
+                return null;
+
+            Undo.RegisterCreatedObjectUndo(instance, undoName);
+            instance.name = instanceName;
+            return instance;
+        }
+
+        private static GameObject CreateShinyCompanionPrefab(
+            GameObject sourceRoot,
+            string folder,
+            string folderName,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode)
+        {
+            if (sourceRoot == null)
+                return null;
+
+            GameObject shinyRoot = UnityEngine.Object.Instantiate(sourceRoot) as GameObject;
+            if (shinyRoot == null)
+                return null;
+
+            shinyRoot.name = folderName + "_Shiny";
+
+            try
+            {
+                ReplaceRendererMaterialsWithShiny(shinyRoot, folder);
+
+                if (materialAnimationMode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback)
+                    ReplaceTextureSwapperTexturesWithShiny(shinyRoot, folder);
+                else
+                    ReplaceAnimationMaterialCurvesWithShiny(shinyRoot, folder, folderName, animationSystemMode);
+
+                string shinyPrefabPath = folder + "/" + folderName + "_Shiny.prefab";
+                return PrefabUtility.CreatePrefab(shinyPrefabPath, shinyRoot, ReplacePrefabOptions.ReplaceNameBased);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(shinyRoot);
+            }
+        }
+
+        private static void ReplaceRendererMaterialsWithShiny(GameObject root, string folder)
+        {
+            Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+            for (int r = 0; r < renderers.Length; r++)
+            {
+                Material[] current = renderers[r].sharedMaterials;
+                bool changed = false;
+
+                for (int i = 0; i < current.Length; i++)
+                {
+                    Material shiny = FindShinyMaterialForMaterial(current[i], folder);
+                    if (shiny == null)
+                        continue;
+
+                    current[i] = shiny;
+                    changed = true;
+                }
+
+                if (changed)
+                    renderers[r].sharedMaterials = current;
+            }
+        }
+
+        private static Material FindShinyMaterialForMaterial(Material source, string folder)
+        {
+            if (source == null)
+                return null;
+
+            string baseName = source.name;
+            int hueIndex = baseName.LastIndexOf("_Hue", StringComparison.Ordinal);
+            if (hueIndex >= 0)
+                baseName = baseName.Substring(0, hueIndex);
+            if (baseName.EndsWith("_Shiny", StringComparison.Ordinal))
+                return source;
+
+            string path = folder + "/Materials/Shiny/" + baseName + "_Shiny.mat";
+            return AssetDatabase.LoadAssetAtPath<Material>(path);
+        }
+
+        private static Texture FindShinyTextureForTexture(Texture source, string folder)
+        {
+            if (source == null)
+                return null;
+
+            string baseName = source.name;
+            int hueIndex = baseName.LastIndexOf("_Hue", StringComparison.Ordinal);
+            if (hueIndex >= 0)
+                baseName = baseName.Substring(0, hueIndex);
+            if (baseName.EndsWith("_Shiny", StringComparison.Ordinal))
+                return source;
+
+            string path = folder + "/Textures/Shiny/" + baseName + "_Shiny.png";
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
+        private static void ReplaceTextureSwapperTexturesWithShiny(GameObject root, string folder)
+        {
+            PS3DS_TextureSwapper swapper = root.GetComponent<PS3DS_TextureSwapper>();
+            if (swapper == null)
+                return;
+
+            FieldInfo setsField = typeof(PS3DS_TextureSwapper).GetField(
+                "m_sets",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (setsField == null)
+                return;
+
+            PS3DS_TextureSwapper.TextureSwapSet[] sets =
+                setsField.GetValue(swapper) as PS3DS_TextureSwapper.TextureSwapSet[];
+            if (sets == null)
+                return;
+
+            for (int s = 0; s < sets.Length; s++)
+            {
+                PS3DS_TextureSwapper.TextureSwapSet set = sets[s];
+                if (set == null || set.Entries == null)
+                    continue;
+
+                for (int e = 0; e < set.Entries.Length; e++)
+                {
+                    PS3DS_TextureSwapper.TextureSwapEntry entry = set.Entries[e];
+                    if (entry == null || entry.Texture == null)
+                        continue;
+
+                    Texture shiny = FindShinyTextureForTexture(entry.Texture, folder);
+                    if (shiny != null)
+                        entry.Texture = shiny;
+                }
+            }
+
+            setsField.SetValue(swapper, sets);
+            EditorUtility.SetDirty(swapper);
+        }
+
+        private static void ReplaceAnimationMaterialCurvesWithShiny(
+            GameObject root,
+            string folder,
+            string folderName,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode)
+        {
+            if (animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
+            {
+                UnityEngine.Animation animation = root.GetComponent<UnityEngine.Animation>();
+                if (animation == null)
+                    return;
+
+                List<AnimationClip> clips = new List<AnimationClip>();
+                foreach (AnimationState state in animation)
+                    if (state != null && state.clip != null && !clips.Contains(state.clip))
+                        clips.Add(state.clip);
+
+                for (int i = 0; i < clips.Count; i++)
+                {
+                    AnimationClip shinyClip = CreateShinyAnimationClip(clips[i], folder, folderName);
+                    if (shinyClip == null)
+                        continue;
+                    animation.RemoveClip(clips[i]);
+                    animation.AddClip(shinyClip, shinyClip.name);
+                    if (i == 0)
+                        animation.clip = shinyClip;
+                }
+            }
+            else
+            {
+                Animator animator = root.GetComponent<Animator>();
+                AnimatorController sourceController = animator != null ? animator.runtimeAnimatorController as AnimatorController : null;
+                if (animator == null || sourceController == null)
+                    return;
+
+                string controllerPath = folder + "/Animations/" + folderName + "_Shiny.controller";
+                AnimatorController shinyController = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+                AnimatorStateMachine shinyStateMachine = shinyController.layers[0].stateMachine;
+                AnimatorStateMachine sourceStateMachine = sourceController.layers[0].stateMachine;
+                ChildAnimatorState[] states = sourceStateMachine.states;
+
+                for (int i = 0; i < states.Length; i++)
+                {
+                    AnimatorState sourceState = states[i].state;
+                    AnimationClip sourceClip = sourceState != null ? sourceState.motion as AnimationClip : null;
+                    if (sourceClip == null)
+                        continue;
+
+                    AnimationClip shinyClip = CreateShinyAnimationClip(sourceClip, folder, folderName);
+                    AnimatorState shinyState = shinyStateMachine.AddState(sourceState.name);
+                    shinyState.motion = shinyClip != null ? shinyClip : sourceClip;
+                    if (sourceStateMachine.defaultState == sourceState)
+                        shinyStateMachine.defaultState = shinyState;
+                }
+
+                animator.runtimeAnimatorController = shinyController;
+            }
+        }
+
+        private static AnimationClip CreateShinyAnimationClip(AnimationClip source, string folder, string folderName)
+        {
+            if (source == null)
+                return null;
+
+            AnimationClip clip = UnityEngine.Object.Instantiate(source) as AnimationClip;
+            if (clip == null)
+                return null;
+
+            clip.name = source.name + "_Shiny";
+            EditorCurveBinding[] bindings = AnimationUtility.GetObjectReferenceCurveBindings(source);
+            for (int b = 0; b < bindings.Length; b++)
+            {
+                ObjectReferenceKeyframe[] keys = AnimationUtility.GetObjectReferenceCurve(source, bindings[b]);
+                bool changed = false;
+                for (int k = 0; k < keys.Length; k++)
+                {
+                    Material material = keys[k].value as Material;
+                    if (material == null)
+                        continue;
+
+                    Material shiny = FindShinyMaterialForMaterial(material, folder);
+                    if (shiny == null)
+                        continue;
+
+                    keys[k].value = shiny;
+                    changed = true;
+                }
+
+                if (changed)
+                    AnimationUtility.SetObjectReferenceCurve(clip, bindings[b], keys);
+            }
+
+            string path = folder + "/Animations/" + clip.name + ".anim";
+            AnimationClip existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
+            if (existing != null)
+                AssetDatabase.DeleteAsset(path);
+            AssetDatabase.CreateAsset(clip, path);
+            return clip;
+        }
+
+        internal static bool ImportVariantOnly(
+            FragmentModel model,
+            string rootPath,
+            int fileIndex,
+            bool flipTexturesY,
+            bool flipTexturesX,
+            bool mirrorTextures,
+            Shader materialShader,
+            PS3DS_PokemonStadiumModelImporter.ColorVariantMode colorVariantMode,
+            int variantTrainerId,
+            string variantTrainerName,
+            string variantNickname,
+            int variantManualHue,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode,
+            bool instantiatePrefab,
+            bool applyColorVariant,
+            bool verboseVariants)
+        {
+            if (model == null)
+                return false;
+
+            string safeName = Sanitize(model.Name);
+            string folderName = model.Species.ToString("000") + "_" + safeName;
+            string folder = rootPath.TrimEnd('/') + "/" + folderName;
+
+            if (verboseVariants)
+            {
+                string verboseFolder = folder + "/verbose";
+                PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(verboseFolder);
+                LogShinyDiagnostics(model, verboseFolder);
+            }
+
+            return TryAppendNumberedVariant(
+                model,
+                folder,
+                folderName,
+                fileIndex,
+                flipTexturesY,
+                flipTexturesX,
+                mirrorTextures,
+                materialShader,
+                colorVariantMode,
+                variantTrainerId,
+                variantTrainerName,
+                variantNickname,
+                variantManualHue,
+                animationSystemMode,
+                materialAnimationMode,
+                instantiatePrefab,
+                applyColorVariant);
+        }
+
+        private static bool TryAppendNumberedVariant(
+            FragmentModel model,
+            string folder,
+            string folderName,
+            int fileIndex,
+            bool flipTexturesY,
+            bool flipTexturesX,
+            bool mirrorTextures,
+            Shader materialShader,
+            PS3DS_PokemonStadiumModelImporter.ColorVariantMode colorVariantMode,
+            int variantTrainerId,
+            string variantTrainerName,
+            string variantNickname,
+            int variantManualHue,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode,
+            bool instantiatePrefab,
+            bool applyColorVariant)
+        {
+            string basePrefabPath = folder + "/" + folderName + ".prefab";
+            GameObject basePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePrefabPath);
+            if (basePrefab == null)
+                return false;
+
+            int hue;
+            if (!TryResolveVariantHue(model.Species, fileIndex, colorVariantMode, variantTrainerId,
+                variantTrainerName, variantNickname, variantManualHue, out hue))
+                return false;
+
+            int variantIndex = FindNextVariantIndex(folder, folderName);
+            string number = variantIndex.ToString("00");
+            string variantLabel = "Variant_" + number;
+            string variantRoot = folder + "/VariantHistory/" + variantLabel;
+            string textureFolder = variantRoot + "/Textures";
+            string materialFolder = variantRoot + "/Materials";
+            string animationFolder = variantRoot + "/Animations";
+
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(folder + "/VariantHistory");
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(variantRoot);
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(textureFolder);
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(materialFolder);
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(animationFolder);
+
+            CreateNumberedVariantAssets(model, textureFolder, materialFolder, hue, flipTexturesY,
+                flipTexturesX, mirrorTextures, materialShader);
+
+            GameObject variantRootObject = UnityEngine.Object.Instantiate(basePrefab) as GameObject;
+            if (variantRootObject == null)
+                return false;
+
+            string variantObjectName = folderName + "_Variant_" + number;
+            variantRootObject.name = variantObjectName;
+            try
+            {
+                ReplaceRendererMaterialsWithNumberedVariant(variantRootObject, materialFolder, hue);
+
+                if (materialAnimationMode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback)
+                    ReplaceTextureSwapperTexturesWithNumberedVariant(variantRootObject, textureFolder, hue);
+                else
+                {
+                    ReplaceAnimationMaterialCurvesWithNumberedVariant(variantRootObject, materialFolder,
+                        animationFolder, variantObjectName, hue, animationSystemMode);
+                    ApplyInitialVariantMaterialsFromAnimation(variantRootObject);
+                }
+
+                string prefabPath = folder + "/" + variantObjectName + ".prefab";
+                GameObject variantPrefab = PrefabUtility.CreatePrefab(prefabPath, variantRootObject,
+                    ReplacePrefabOptions.ReplaceNameBased);
+
+                Debug.Log("[Stadium2Unity Variant] Created " + variantObjectName +
+                    " with hue " + FormatSignedInt(hue) + " degrees.");
+
+                if (instantiatePrefab && applyColorVariant && variantPrefab != null)
+                {
+                    GameObject instance = InstantiatePrefabAsset(variantPrefab, variantObjectName,
+                        "Instantiate numbered Pokemon Stadium variant");
+                    if (instance != null)
+                        Selection.activeGameObject = instance;
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(variantRootObject);
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return true;
+        }
+
+        private static bool TryResolveVariantHue(int species, int fileIndex,
+            PS3DS_PokemonStadiumModelImporter.ColorVariantMode mode, int trainerId,
+            string trainerName, string nickname, int manualHue, out int hue)
+        {
+            if (mode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.TrainerData)
+                return TryCalculateTrainerVariantHue(species, trainerId, trainerName, nickname, out hue);
+            if (mode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.ManualHue)
+            {
+                hue = Mathf.Clamp(manualHue, -180, 180);
+                return true;
+            }
+            return TryCalculateRandomVariantHue(species, fileIndex + Environment.TickCount, out hue);
+        }
+
+        private static int FindNextVariantIndex(string folder, string folderName)
+        {
+            for (int i = 1; i < 10000; i++)
+            {
+                string path = folder + "/" + folderName + "_Variant_" + i.ToString("00") + ".prefab";
+                if (AssetDatabase.LoadAssetAtPath<GameObject>(path) == null)
+                    return i;
+            }
+            return 9999;
+        }
+
+        private static void CreateNumberedVariantAssets(FragmentModel model, string textureFolder,
+            string materialFolder, int hue, bool flipTexturesY, bool flipTexturesX,
+            bool mirrorTextures, Shader materialShader)
+        {
+            Shader shader = materialShader;
+            if (shader == null) shader = Shader.Find("N3DS/N64_StadiumLit");
+#if UNITY_2017_1_OR_NEWER
+            if (shader == null) shader = Shader.Find("Standard");
+#else
+            if (shader == null) shader = Shader.Find("Legacy Shaders/VertexLit");
+#endif
+            if (shader == null) shader = Shader.Find("Unlit/Texture");
+
+            Dictionary<string, PrimitiveData> variants = new Dictionary<string, PrimitiveData>();
+            for (int i = 0; i < model.Textures.Count; i++)
+            {
+                PrimitiveData v = new PrimitiveData();
+                v.Texture = i; v.Tlut = FindTlutForTexture(model, i); v.Palette = 0;
+                v.ClampS = true; v.ClampT = true;
+                variants[GetTextureVariantKey(v)] = v;
+            }
+            for (int i = 0; i < model.Primitives.Count; i++)
+            {
+                PrimitiveData source = model.Primitives[i];
+                if (source.Texture < 0 || source.Texture >= model.Textures.Count) continue;
+                AddTextureVariant(variants, source.Texture, source.Tlut, 0,
+                    mirrorTextures && source.MirrorS, mirrorTextures && source.MirrorT);
+
+                if (source.TextureAnimation >= 0)
+                {
+                    for (int a = 0; a < model.AuxAnimations.Count; a++)
+                    {
+                        AuxAnimationData aux = model.AuxAnimations[a];
+                        if (source.TextureAnimation >= aux.Channels.Length) continue;
+                        int[] track = aux.Channels[source.TextureAnimation];
+                        if (track == null) continue;
+                        for (int f = 0; f < track.Length; f++)
+                        {
+                            int textureIndex = track[f];
+                            if (textureIndex < 0 || textureIndex >= model.Textures.Count) continue;
+                            AddTextureVariant(variants, textureIndex, source.Tlut, 0,
+                                mirrorTextures && source.MirrorS, mirrorTextures && source.MirrorT);
+                        }
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<string, PrimitiveData> pair in variants)
+            {
+                PrimitiveData primitive = pair.Value;
+                int textureIndex = primitive.Texture;
+                DecodedTexture decoded = DecodeTexture(model, textureIndex, primitive.Tlut, 0);
+                if (flipTexturesY) FlipTextureY(decoded);
+                if (flipTexturesX) FlipTextureX(decoded);
+#if !UNITY_2017_1_OR_NEWER
+                if (mirrorTextures && (primitive.MirrorS || primitive.MirrorT))
+                    decoded = BakeMirroredTexture(decoded, primitive.MirrorS, primitive.MirrorT);
+#endif
+                ApplyStadiumHueVariant(decoded, hue);
+                string suffix = BuildTextureVariantSuffix(primitive) + "_Hue" + FormatSignedInt(hue);
+                string textureName = "Texture_" + textureIndex.ToString("00") + suffix;
+                string texturePath = textureFolder + "/" + textureName + ".png";
+                WriteTextureAsset(decoded, textureName, texturePath, mirrorTextures, primitive);
+
+                string materialName = "Material_" + textureIndex.ToString("00") + suffix;
+                string materialPath = materialFolder + "/" + materialName + ".mat";
+                Material material = new Material(shader);
+                material.name = materialName;
+                material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
+                AssetDatabase.CreateAsset(material, materialPath);
+            }
+        }
+
+        private static Material FindNumberedVariantMaterial(Material source, string materialFolder, int hue)
+        {
+            if (source == null) return null;
+            string baseName = StripColorVariantSuffixes(source.name);
+            string suffix = "_Hue" + FormatSignedInt(hue);
+            Material result = AssetDatabase.LoadAssetAtPath<Material>(materialFolder + "/" + baseName + suffix + ".mat");
+            if (result != null) return result;
+            if (source.mainTexture != null)
+            {
+                string textureBase = StripColorVariantSuffixes(source.mainTexture.name);
+                if (textureBase.StartsWith("Texture_", StringComparison.Ordinal))
+                {
+                    string materialBase = "Material_" + textureBase.Substring("Texture_".Length);
+                    return AssetDatabase.LoadAssetAtPath<Material>(materialFolder + "/" + materialBase + suffix + ".mat");
+                }
+            }
+            return null;
+        }
+
+        private static void ReplaceRendererMaterialsWithNumberedVariant(GameObject root, string materialFolder, int hue)
+        {
+            Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+            for (int r = 0; r < renderers.Length; r++)
+            {
+                Material[] current = renderers[r].sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < current.Length; i++)
+                {
+                    Material variant = FindNumberedVariantMaterial(current[i], materialFolder, hue);
+                    if (variant == null) continue;
+                    current[i] = variant; changed = true;
+                }
+                if (changed) renderers[r].sharedMaterials = current;
+            }
+        }
+
+        private static Texture FindNumberedVariantTexture(Texture source, string textureFolder, int hue)
+        {
+            if (source == null) return null;
+            string baseName = StripColorVariantSuffixes(source.name);
+            string suffix = "_Hue" + FormatSignedInt(hue);
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(textureFolder + "/" + baseName + suffix + ".png");
+        }
+
+        private static void ReplaceTextureSwapperTexturesWithNumberedVariant(GameObject root, string textureFolder, int hue)
+        {
+            PS3DS_TextureSwapper swapper = root.GetComponent<PS3DS_TextureSwapper>();
+            if (swapper == null) return;
+            FieldInfo setsField = typeof(PS3DS_TextureSwapper).GetField("m_sets", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (setsField == null) return;
+            PS3DS_TextureSwapper.TextureSwapSet[] sets = setsField.GetValue(swapper) as PS3DS_TextureSwapper.TextureSwapSet[];
+            if (sets == null) return;
+            for (int s = 0; s < sets.Length; s++)
+            {
+                if (sets[s] == null || sets[s].Entries == null) continue;
+                for (int e = 0; e < sets[s].Entries.Length; e++)
+                {
+                    PS3DS_TextureSwapper.TextureSwapEntry entry = sets[s].Entries[e];
+                    if (entry == null || entry.Texture == null) continue;
+                    Texture variant = FindNumberedVariantTexture(entry.Texture, textureFolder, hue);
+                    if (variant != null) entry.Texture = variant;
+                }
+            }
+            setsField.SetValue(swapper, sets);
+            EditorUtility.SetDirty(swapper);
+        }
+
+        private static AnimationClip CreateNumberedVariantAnimationClip(AnimationClip source,
+            string materialFolder, string animationFolder, int hue, string label)
+        {
+            if (source == null) return null;
+            AnimationClip clip = UnityEngine.Object.Instantiate(source) as AnimationClip;
+            if (clip == null) return null;
+            clip.name = source.name + "_" + label;
+            EditorCurveBinding[] bindings = AnimationUtility.GetObjectReferenceCurveBindings(source);
+            for (int b = 0; b < bindings.Length; b++)
+            {
+                ObjectReferenceKeyframe[] keys = AnimationUtility.GetObjectReferenceCurve(source, bindings[b]);
+                bool changed = false;
+                for (int k = 0; k < keys.Length; k++)
+                {
+                    Material material = keys[k].value as Material;
+                    if (material == null) continue;
+                    Material variant = FindNumberedVariantMaterial(material, materialFolder, hue);
+                    if (variant == null) continue;
+                    keys[k].value = variant; changed = true;
+                }
+                if (changed) AnimationUtility.SetObjectReferenceCurve(clip, bindings[b], keys);
+            }
+            string path = animationFolder + "/" + clip.name + ".anim";
+            AssetDatabase.CreateAsset(clip, path);
+            return clip;
+        }
+
+        private static void ReplaceAnimationMaterialCurvesWithNumberedVariant(GameObject root,
+            string materialFolder, string animationFolder, string variantObjectName, int hue,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode)
+        {
+            if (animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
+            {
+                UnityEngine.Animation animation = root.GetComponent<UnityEngine.Animation>();
+                if (animation == null) return;
+                List<AnimationClip> clips = new List<AnimationClip>();
+                foreach (AnimationState state in animation)
+                    if (state != null && state.clip != null && !clips.Contains(state.clip)) clips.Add(state.clip);
+                for (int i = 0; i < clips.Count; i++)
+                {
+                    AnimationClip variantClip = CreateNumberedVariantAnimationClip(clips[i], materialFolder,
+                        animationFolder, hue, variantObjectName);
+                    if (variantClip == null) continue;
+                    animation.RemoveClip(clips[i]); animation.AddClip(variantClip, variantClip.name);
+                    if (i == 0) animation.clip = variantClip;
+                }
+            }
+            else
+            {
+                Animator animator = root.GetComponent<Animator>();
+                AnimatorController sourceController = animator != null ? animator.runtimeAnimatorController as AnimatorController : null;
+                if (animator == null || sourceController == null) return;
+                string controllerPath = animationFolder + "/" + variantObjectName + ".controller";
+                AnimatorController variantController = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+                AnimatorStateMachine target = variantController.layers[0].stateMachine;
+                AnimatorStateMachine source = sourceController.layers[0].stateMachine;
+                ChildAnimatorState[] states = source.states;
+                for (int i = 0; i < states.Length; i++)
+                {
+                    AnimatorState sourceState = states[i].state;
+                    AnimationClip sourceClip = sourceState != null ? sourceState.motion as AnimationClip : null;
+                    if (sourceClip == null) continue;
+                    AnimationClip variantClip = CreateNumberedVariantAnimationClip(sourceClip, materialFolder,
+                        animationFolder, hue, variantObjectName);
+                    AnimatorState state = target.AddState(sourceState.name);
+                    state.motion = variantClip != null ? variantClip : sourceClip;
+                    if (source.defaultState == sourceState) target.defaultState = state;
+                }
+                animator.runtimeAnimatorController = variantController;
+            }
+        }
+
+        private static GameObject CreateVariantCompanionPrefab(
+            GameObject sourceRoot,
+            string folder,
+            string folderName,
+            int hue,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode,
+            PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode materialAnimationMode)
+        {
+            if (sourceRoot == null)
+                return null;
+
+            GameObject variantRoot = UnityEngine.Object.Instantiate(sourceRoot) as GameObject;
+            if (variantRoot == null)
+                return null;
+
+            variantRoot.name = folderName + "_Variant";
+
+            try
+            {
+                ReplaceRendererMaterialsWithVariant(variantRoot, folder, hue);
+
+                if (materialAnimationMode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback)
+                {
+                    ReplaceTextureSwapperTexturesWithVariant(variantRoot, folder, hue);
+                }
+                else
+                {
+                    ReplaceAnimationMaterialCurvesWithVariant(variantRoot, folder, folderName, hue, animationSystemMode);
+                    ApplyInitialVariantMaterialsFromAnimation(variantRoot);
+                }
+
+                string variantPrefabPath = folder + "/" + folderName + "_Variant.prefab";
+                return PrefabUtility.CreatePrefab(variantPrefabPath, variantRoot, ReplacePrefabOptions.ReplaceNameBased);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(variantRoot);
+            }
+        }
+
+        private static void ReplaceRendererMaterialsWithVariant(GameObject root, string folder, int hue)
+        {
+            Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+            for (int r = 0; r < renderers.Length; r++)
+            {
+                Material[] current = renderers[r].sharedMaterials;
+                bool changed = false;
+
+                for (int i = 0; i < current.Length; i++)
+                {
+                    Material variant = FindVariantMaterialForMaterial(current[i], folder, hue);
+                    if (variant == null)
+                        continue;
+
+                    current[i] = variant;
+                    changed = true;
+                }
+
+                if (changed)
+                    renderers[r].sharedMaterials = current;
+            }
+        }
+
+        private static Material FindVariantMaterialForMaterial(Material source, string folder, int hue)
+        {
+            if (source == null)
+                return null;
+
+            string suffix = "_Hue" + FormatSignedInt(hue);
+            string baseName = StripColorVariantSuffixes(source.name);
+            string path = folder + "/Materials/Variants/" + baseName + suffix + ".mat";
+            Material variant = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (variant != null)
+                return variant;
+
+            if (source.mainTexture != null)
+            {
+                string textureBaseName = StripColorVariantSuffixes(source.mainTexture.name);
+                if (textureBaseName.StartsWith("Texture_", StringComparison.Ordinal))
+                {
+                    string materialBaseName = "Material_" + textureBaseName.Substring("Texture_".Length);
+                    path = folder + "/Materials/Variants/" + materialBaseName + suffix + ".mat";
+                    variant = AssetDatabase.LoadAssetAtPath<Material>(path);
+                    if (variant != null)
+                        return variant;
+                }
+            }
+
+            return null;
+        }
+
+        private static string StripColorVariantSuffixes(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            string result = value;
+            int hueIndex = result.LastIndexOf("_Hue", StringComparison.Ordinal);
+            if (hueIndex >= 0)
+                result = result.Substring(0, hueIndex);
+            if (result.EndsWith("_Shiny", StringComparison.Ordinal))
+                result = result.Substring(0, result.Length - "_Shiny".Length);
+            if (result.EndsWith(" (Instance)", StringComparison.Ordinal))
+                result = result.Substring(0, result.Length - " (Instance)".Length);
+            if (result.EndsWith("(Clone)", StringComparison.Ordinal))
+                result = result.Substring(0, result.Length - "(Clone)".Length).TrimEnd();
+            return result;
+        }
+
+        private static Texture FindVariantTextureForTexture(Texture source, string folder, int hue)
+        {
+            if (source == null)
+                return null;
+
+            string baseName = source.name;
+            int hueIndex = baseName.LastIndexOf("_Hue", StringComparison.Ordinal);
+            if (hueIndex >= 0)
+                baseName = baseName.Substring(0, hueIndex);
+            if (baseName.EndsWith("_Shiny", StringComparison.Ordinal))
+                baseName = baseName.Substring(0, baseName.Length - "_Shiny".Length);
+
+            string suffix = "_Hue" + FormatSignedInt(hue);
+            string path = folder + "/Textures/Variants/" + baseName + suffix + ".png";
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
+        private static void ReplaceTextureSwapperTexturesWithVariant(GameObject root, string folder, int hue)
+        {
+            PS3DS_TextureSwapper swapper = root.GetComponent<PS3DS_TextureSwapper>();
+            if (swapper == null)
+                return;
+
+            FieldInfo setsField = typeof(PS3DS_TextureSwapper).GetField(
+                "m_sets",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (setsField == null)
+                return;
+
+            PS3DS_TextureSwapper.TextureSwapSet[] sets =
+                setsField.GetValue(swapper) as PS3DS_TextureSwapper.TextureSwapSet[];
+            if (sets == null)
+                return;
+
+            for (int s = 0; s < sets.Length; s++)
+            {
+                PS3DS_TextureSwapper.TextureSwapSet set = sets[s];
+                if (set == null || set.Entries == null)
+                    continue;
+
+                for (int e = 0; e < set.Entries.Length; e++)
+                {
+                    PS3DS_TextureSwapper.TextureSwapEntry entry = set.Entries[e];
+                    if (entry == null || entry.Texture == null)
+                        continue;
+
+                    Texture variant = FindVariantTextureForTexture(entry.Texture, folder, hue);
+                    if (variant != null)
+                        entry.Texture = variant;
+                }
+            }
+
+            setsField.SetValue(swapper, sets);
+            EditorUtility.SetDirty(swapper);
+        }
+
+        private static void ReplaceAnimationMaterialCurvesWithVariant(
+            GameObject root,
+            string folder,
+            string folderName,
+            int hue,
+            PS3DS_PokemonStadiumModelImporter.AnimationSystemMode animationSystemMode)
+        {
+            if (animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
+            {
+                UnityEngine.Animation animation = root.GetComponent<UnityEngine.Animation>();
+                if (animation == null)
+                    return;
+
+                List<AnimationClip> clips = new List<AnimationClip>();
+                foreach (AnimationState state in animation)
+                    if (state != null && state.clip != null && !clips.Contains(state.clip))
+                        clips.Add(state.clip);
+
+                for (int i = 0; i < clips.Count; i++)
+                {
+                    AnimationClip variantClip = CreateVariantAnimationClip(clips[i], folder, hue);
+                    if (variantClip == null)
+                        continue;
+                    animation.RemoveClip(clips[i]);
+                    animation.AddClip(variantClip, variantClip.name);
+                    if (i == 0)
+                        animation.clip = variantClip;
+                }
+            }
+            else
+            {
+                Animator animator = root.GetComponent<Animator>();
+                AnimatorController sourceController = animator != null ? animator.runtimeAnimatorController as AnimatorController : null;
+                if (animator == null || sourceController == null)
+                    return;
+
+                string controllerPath = folder + "/Animations/" + folderName + "_Variant.controller";
+                AnimatorController variantController = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+                AnimatorStateMachine variantStateMachine = variantController.layers[0].stateMachine;
+                AnimatorStateMachine sourceStateMachine = sourceController.layers[0].stateMachine;
+                ChildAnimatorState[] states = sourceStateMachine.states;
+
+                for (int i = 0; i < states.Length; i++)
+                {
+                    AnimatorState sourceState = states[i].state;
+                    AnimationClip sourceClip = sourceState != null ? sourceState.motion as AnimationClip : null;
+                    if (sourceClip == null)
+                        continue;
+
+                    AnimationClip variantClip = CreateVariantAnimationClip(sourceClip, folder, hue);
+                    AnimatorState variantState = variantStateMachine.AddState(sourceState.name);
+                    variantState.motion = variantClip != null ? variantClip : sourceClip;
+                    if (sourceStateMachine.defaultState == sourceState)
+                        variantStateMachine.defaultState = variantState;
+                }
+
+                animator.runtimeAnimatorController = variantController;
+            }
+        }
+
+        private static void ApplyInitialVariantMaterialsFromAnimation(GameObject root)
+        {
+            if (root == null)
+                return;
+
+            AnimationClip clip = GetInitialAnimationClip(root);
+            if (clip == null)
+                return;
+
+            EditorCurveBinding[] bindings = AnimationUtility.GetObjectReferenceCurveBindings(clip);
+            for (int b = 0; b < bindings.Length; b++)
+            {
+                EditorCurveBinding binding = bindings[b];
+                if (binding.propertyName == null ||
+                    !binding.propertyName.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal))
+                    continue;
+
+                int materialIndex = ParseMaterialArrayIndex(binding.propertyName);
+                if (materialIndex < 0)
+                    continue;
+
+                ObjectReferenceKeyframe[] keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+                if (keys == null || keys.Length == 0)
+                    continue;
+
+                Material initialMaterial = keys[0].value as Material;
+                if (initialMaterial == null)
+                    continue;
+
+                Transform target = string.IsNullOrEmpty(binding.path)
+                    ? root.transform
+                    : root.transform.Find(binding.path);
+                if (target == null)
+                    continue;
+
+                Renderer renderer = target.GetComponent(binding.type) as Renderer;
+                if (renderer == null)
+                    renderer = target.GetComponent<Renderer>();
+                if (renderer == null)
+                    continue;
+
+                Material[] materials = renderer.sharedMaterials;
+                if (materialIndex >= materials.Length)
+                    continue;
+
+                materials[materialIndex] = initialMaterial;
+                renderer.sharedMaterials = materials;
+                EditorUtility.SetDirty(renderer);
+            }
+        }
+
+        private static AnimationClip GetInitialAnimationClip(GameObject root)
+        {
+            Animator animator = root.GetComponent<Animator>();
+            AnimatorController controller = animator != null
+                ? animator.runtimeAnimatorController as AnimatorController
+                : null;
+
+            if (controller != null && controller.layers != null && controller.layers.Length > 0)
+            {
+                AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
+                AnimatorState defaultState = stateMachine != null ? stateMachine.defaultState : null;
+                AnimationClip defaultClip = defaultState != null ? defaultState.motion as AnimationClip : null;
+                if (defaultClip != null)
+                    return defaultClip;
+
+                ChildAnimatorState[] states = stateMachine != null ? stateMachine.states : null;
+                if (states != null)
+                {
+                    for (int i = 0; i < states.Length; i++)
+                    {
+                        AnimationClip clip = states[i].state != null
+                            ? states[i].state.motion as AnimationClip
+                            : null;
+                        if (clip != null)
+                            return clip;
+                    }
+                }
+            }
+
+            UnityEngine.Animation legacy = root.GetComponent<UnityEngine.Animation>();
+            if (legacy != null)
+            {
+                if (legacy.clip != null)
+                    return legacy.clip;
+
+                foreach (AnimationState state in legacy)
+                    if (state != null && state.clip != null)
+                        return state.clip;
+            }
+
+            return null;
+        }
+
+        private static int ParseMaterialArrayIndex(string propertyName)
+        {
+            const string prefix = "m_Materials.Array.data[";
+            if (string.IsNullOrEmpty(propertyName) ||
+                !propertyName.StartsWith(prefix, StringComparison.Ordinal))
+                return -1;
+
+            int end = propertyName.IndexOf(']', prefix.Length);
+            if (end < 0)
+                return -1;
+
+            int index;
+            if (!int.TryParse(propertyName.Substring(prefix.Length, end - prefix.Length), out index))
+                return -1;
+            return index;
+        }
+
+        private static AnimationClip CreateVariantAnimationClip(AnimationClip source, string folder, int hue)
+        {
+            if (source == null)
+                return null;
+
+            AnimationClip clip = UnityEngine.Object.Instantiate(source) as AnimationClip;
+            if (clip == null)
+                return null;
+
+            clip.name = source.name + "_Variant";
+            EditorCurveBinding[] bindings = AnimationUtility.GetObjectReferenceCurveBindings(source);
+            for (int b = 0; b < bindings.Length; b++)
+            {
+                ObjectReferenceKeyframe[] keys = AnimationUtility.GetObjectReferenceCurve(source, bindings[b]);
+                bool changed = false;
+                for (int k = 0; k < keys.Length; k++)
+                {
+                    Material material = keys[k].value as Material;
+                    if (material == null)
+                        continue;
+
+                    Material variant = FindVariantMaterialForMaterial(material, folder, hue);
+                    if (variant == null)
+                        continue;
+
+                    keys[k].value = variant;
+                    changed = true;
+                }
+
+                if (changed)
+                    AnimationUtility.SetObjectReferenceCurve(clip, bindings[b], keys);
+            }
+
+            string path = folder + "/Animations/" + clip.name + ".anim";
+            AnimationClip existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
+            if (existing != null)
+                AssetDatabase.DeleteAsset(path);
+            AssetDatabase.CreateAsset(clip, path);
+            return clip;
         }
 
         private static void CreateSkeleton(FragmentModel model, Transform root, Transform[] pivots, Transform[] joints)
@@ -1643,6 +3071,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             keyPrimitive.Tlut = primitive.Tlut;
             keyPrimitive.ClampS = true;
             keyPrimitive.ClampT = true;
+            keyPrimitive.Palette = 0;
             keyPrimitive.MirrorS = primitive.MirrorS;
             keyPrimitive.MirrorT = primitive.MirrorT;
 
@@ -1658,7 +3087,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             renderer.sharedMaterial = material;
         }
 
-        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool flipTexturesX, bool mirrorTextures, Shader materialShader)
+        private static Dictionary<string, Material> CreateTextures(FragmentModel model, string folder, bool createMaterials, bool flipTexturesY, bool flipTexturesX, bool mirrorTextures, Shader materialShader, bool exportShiny, bool applyShinyMaterials, bool exportColorVariant, bool applyColorVariant, PS3DS_PokemonStadiumModelImporter.ColorVariantMode colorVariantMode, int variantTrainerId, string variantTrainerName, string variantNickname, int variantManualHue, int fileIndex)
         {
             Dictionary<string, Material> materials = createMaterials
                 ? new Dictionary<string, Material>()
@@ -1681,6 +3110,28 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                     shader = Shader.Find("Unlit/Texture");
             }
 
+            int variantHue = 0;
+            bool hasColorVariant = false;
+            if (exportColorVariant && model.Species >= 1 && model.Species <= 151)
+            {
+                if (colorVariantMode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.TrainerData)
+                {
+                    hasColorVariant = TryCalculateTrainerVariantHue(model.Species, variantTrainerId, variantTrainerName, variantNickname, out variantHue);
+                }
+                else if (colorVariantMode == PS3DS_PokemonStadiumModelImporter.ColorVariantMode.ManualHue)
+                {
+                    variantHue = Mathf.Clamp(variantManualHue, -180, 180);
+                    hasColorVariant = true;
+                }
+                else
+                {
+                    hasColorVariant = TryCalculateRandomVariantHue(model.Species, fileIndex, out variantHue);
+                }
+
+                if (hasColorVariant)
+                    Debug.Log("[Stadium2Unity Variant] " + model.Name + " hue shift: " + FormatSignedInt(variantHue) + " degrees (" + colorVariantMode + ").");
+            }
+
             Dictionary<string, PrimitiveData> variants = new Dictionary<string, PrimitiveData>();
 
             for (int i = 0; i < model.Textures.Count; i++)
@@ -1688,6 +3139,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 PrimitiveData baseVariant = new PrimitiveData();
                 baseVariant.Texture = i;
                 baseVariant.Tlut = FindTlutForTexture(model, i);
+                baseVariant.Palette = 0;
                 baseVariant.ClampS = true;
                 baseVariant.ClampT = true;
                 variants[GetTextureVariantKey(baseVariant)] = baseVariant;
@@ -1699,7 +3151,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 if (source.Texture < 0 || source.Texture >= model.Textures.Count)
                     continue;
 
-                AddTextureVariant(variants, source.Texture, source.Tlut,
+                AddTextureVariant(variants, source.Texture, source.Tlut, 0,
                     mirrorTextures && source.MirrorS,
                     mirrorTextures && source.MirrorT);
             }
@@ -1723,7 +3175,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                         int textureIndex = track[frame];
                         if (textureIndex < 0 || textureIndex >= model.Textures.Count)
                             continue;
-                        AddTextureVariant(variants, textureIndex, source.Tlut,
+                        AddTextureVariant(variants, textureIndex, source.Tlut, 0,
                             mirrorTextures && source.MirrorS,
                             mirrorTextures && source.MirrorT);
                     }
@@ -1736,58 +3188,86 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 int textureIndex = primitive.Texture;
                 DecodedTexture decoded = DecodeTexture(model, textureIndex, primitive.Tlut, 0);
 
-                if (flipTexturesY)
-                    FlipTextureY(decoded);
-
-                if (flipTexturesX)
-                    FlipTextureX(decoded);
+                PrepareDecodedTexture(decoded, flipTexturesY, flipTexturesX);
 
 #if !UNITY_2017_1_OR_NEWER
                 if (mirrorTextures && (primitive.MirrorS || primitive.MirrorT))
                     decoded = BakeMirroredTexture(decoded, primitive.MirrorS, primitive.MirrorT);
 #endif
 
-                Texture2D texture = new Texture2D(decoded.Width, decoded.Height, TextureFormat.RGBA32, false);
-                texture.name = "Texture_" + textureIndex.ToString("00") + BuildTextureVariantSuffix(primitive);
-                texture.SetPixels32(decoded.Pixels);
-                texture.Apply(false, false);
+                string variantSuffix = BuildTextureVariantSuffix(primitive);
+                string normalTextureName = "Texture_" + textureIndex.ToString("00") + variantSuffix;
+                string normalTexturePath = folder + "/Textures/" + normalTextureName + ".png";
+                WriteTextureAsset(decoded, normalTextureName, normalTexturePath, mirrorTextures, primitive);
 
-                string texturePath = folder + "/Textures/" + texture.name + ".png";
-                File.WriteAllBytes(ToAbsolutePath(texturePath), texture.EncodeToPNG());
-                UnityEngine.Object.DestroyImmediate(texture);
-
-                AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
-                TextureImporter importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
-                if (importer != null)
+                Material normalMaterial = null;
+                if (createMaterials)
                 {
-                    importer.textureType = TextureImporterType.Default;
-                    importer.mipmapEnabled = false;
-                    importer.filterMode = FilterMode.Bilinear;
-                    importer.alphaIsTransparency = true;
+                    string normalMaterialName = "Material_" + textureIndex.ToString("00") + variantSuffix;
+                    string materialPath = folder + "/Materials/" + normalMaterialName + ".mat";
+                    normalMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+                    if (normalMaterial == null)
+                    {
+                        normalMaterial = new Material(shader);
+                        normalMaterial.name = normalMaterialName;
+                        normalMaterial.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(normalTexturePath);
+                        AssetDatabase.CreateAsset(normalMaterial, materialPath);
+                    }
+                }
 
-#if UNITY_2017_1_OR_NEWER
-                    importer.wrapModeU = mirrorTextures && primitive.MirrorS
-                        ? TextureWrapMode.Mirror
-                        : TextureWrapMode.Clamp;
-                    importer.wrapModeV = mirrorTextures && primitive.MirrorT
-                        ? TextureWrapMode.Mirror
-                        : TextureWrapMode.Clamp;
-#else
-                    importer.wrapMode = TextureWrapMode.Clamp;
-#endif
-                    importer.SaveAndReimport();
+                Material selectedMaterial = normalMaterial;
+
+                if (exportShiny && model.Species >= 1 && model.Species <= 151)
+                {
+                    DecodedTexture shinyDecoded = CloneDecodedTexture(decoded);
+                    if (ApplyStadiumShinyRecolor(model.Species, shinyDecoded))
+                    {
+                        string shinyTextureName = "Texture_" + textureIndex.ToString("00") + variantSuffix + "_Shiny";
+                        string shinyTexturePath = folder + "/Textures/Shiny/" + shinyTextureName + ".png";
+                        WriteTextureAsset(shinyDecoded, shinyTextureName, shinyTexturePath, mirrorTextures, primitive);
+
+                        if (createMaterials)
+                        {
+                            string shinyMaterialName = "Material_" + textureIndex.ToString("00") + variantSuffix + "_Shiny";
+                            string shinyMaterialPath = folder + "/Materials/Shiny/" + shinyMaterialName + ".mat";
+                            Material shinyMaterial = AssetDatabase.LoadAssetAtPath<Material>(shinyMaterialPath);
+                            if (shinyMaterial == null)
+                            {
+                                shinyMaterial = new Material(shader);
+                                shinyMaterial.name = shinyMaterialName;
+                                shinyMaterial.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(shinyTexturePath);
+                                AssetDatabase.CreateAsset(shinyMaterial, shinyMaterialPath);
+                            }
+                        }
+                    }
+                }
+
+                if (exportColorVariant && hasColorVariant)
+                {
+                    DecodedTexture variantDecoded = CloneDecodedTexture(decoded);
+                    ApplyStadiumHueVariant(variantDecoded, variantHue);
+                    string hueSuffix = "_Hue" + FormatSignedInt(variantHue);
+                    string variantTextureName = "Texture_" + textureIndex.ToString("00") + variantSuffix + hueSuffix;
+                    string variantTexturePath = folder + "/Textures/Variants/" + variantTextureName + ".png";
+                    WriteTextureAsset(variantDecoded, variantTextureName, variantTexturePath, mirrorTextures, primitive);
+
+                    if (createMaterials)
+                    {
+                        string variantMaterialName = "Material_" + textureIndex.ToString("00") + variantSuffix + hueSuffix;
+                        string variantMaterialPath = folder + "/Materials/Variants/" + variantMaterialName + ".mat";
+                        Material variantMaterial = AssetDatabase.LoadAssetAtPath<Material>(variantMaterialPath);
+                        if (variantMaterial == null)
+                        {
+                            variantMaterial = new Material(shader);
+                            variantMaterial.name = variantMaterialName;
+                            variantMaterial.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(variantTexturePath);
+                            AssetDatabase.CreateAsset(variantMaterial, variantMaterialPath);
+                        }
+                    }
                 }
 
                 if (createMaterials)
-                {
-                    Material material = new Material(shader);
-                    material.name = "Material_" + textureIndex.ToString("00") + BuildTextureVariantSuffix(primitive);
-                    material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
-
-                    string materialPath = folder + "/Materials/" + material.name + ".mat";
-                    AssetDatabase.CreateAsset(material, materialPath);
-                    materials[pair.Key] = material;
-                }
+                    materials[pair.Key] = selectedMaterial;
             }
 
             if (createMaterials)
@@ -1800,6 +3280,740 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             }
 
             return materials;
+        }
+
+        private static DecodedTexture CloneDecodedTexture(DecodedTexture source)
+        {
+            DecodedTexture clone = new DecodedTexture();
+            clone.Width = source.Width;
+            clone.Height = source.Height;
+            clone.Pixels = new Color32[source.Pixels.Length];
+            Array.Copy(source.Pixels, clone.Pixels, source.Pixels.Length);
+            return clone;
+        }
+
+        private static bool TryCalculateRandomVariantHue(int species, int fileIndex, out int hue)
+        {
+            hue = 0;
+            int minHue, maxHue;
+            if (!PS3DS_PokemonStadiumShinyData.TryGetHueRange(species, out minHue, out maxHue))
+                return false;
+
+            int seed = unchecked(Environment.TickCount ^ (species * 397) ^ (fileIndex * 7919));
+            System.Random random = new System.Random(seed);
+            hue = random.Next(minHue, maxHue + 1);
+            return true;
+        }
+
+        private static bool TryCalculateTrainerVariantHue(int species, int trainerId, string trainerName, string nickname, out int hue)
+        {
+            hue = 0;
+            int minHue, maxHue;
+            if (!PS3DS_PokemonStadiumShinyData.TryGetHueRange(species, out minHue, out maxHue))
+                return false;
+
+            if (string.IsNullOrEmpty(nickname))
+                return false;
+
+            int value = 0;
+            trainerId = Mathf.Clamp(trainerId, 0, 65535);
+            value += (trainerId >> 8) & 0xFF;
+            value += trainerId & 0xFF;
+            value += SumStadiumNameBytes(trainerName);
+            value += SumStadiumNameBytes(nickname);
+            value &= 0xFF;
+
+            double mapped = minHue + (value * (maxHue - minHue) / 255.0);
+            hue = (int)Math.Round(mapped, MidpointRounding.AwayFromZero);
+            return true;
+        }
+
+        private static int SumStadiumNameBytes(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return 0;
+
+            int sum = 0;
+            for (int i = 0; i < value.Length; i++)
+                sum += GetStadiumCharacterByte(value[i]);
+            return sum;
+        }
+
+        private static int GetStadiumCharacterByte(char c)
+        {
+            switch (c)
+            {
+                case '×': return 0xD7;
+                case '♂': return 0xA9;
+                case '♀': return 0xBE;
+                case 'Ä': return 0xC4;
+                case 'Ö': return 0xD6;
+                case 'Ü': return 0xDC;
+                case 'ä': return 0xE4;
+                case 'ö': return 0xF6;
+                case 'ü': return 0xFC;
+            }
+
+            if (c <= 0xFF)
+                return (int)c;
+
+            return (int)'?';
+        }
+
+        private static void ApplyStadiumHueVariant(DecodedTexture texture, int hueDegrees)
+        {
+            if (texture == null || texture.Pixels == null)
+                return;
+
+            Dictionary<int, Color32> memo = new Dictionary<int, Color32>();
+            for (int i = 0; i < texture.Pixels.Length; i++)
+            {
+                Color32 source = texture.Pixels[i];
+                int key = (source.r << 16) | (source.g << 8) | source.b;
+                Color32 recolored;
+                if (!memo.TryGetValue(key, out recolored))
+                {
+                    byte r, g, b;
+                    ApplyHslSlide(source.r, source.g, source.b, hueDegrees, 0, 0, out r, out g, out b);
+                    recolored = new Color32(r, g, b, 255);
+                    memo.Add(key, recolored);
+                }
+                texture.Pixels[i] = new Color32(recolored.r, recolored.g, recolored.b, source.a);
+            }
+        }
+
+        private static string FormatSignedInt(int value)
+        {
+            return value >= 0 ? "+" + value.ToString(CultureInfo.InvariantCulture) : value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool ApplyStadiumShinyRecolor(int species, DecodedTexture texture)
+        {
+            if (texture == null || texture.Pixels == null || texture.Pixels.Length == 0)
+                return false;
+
+            Dictionary<int, int> lut = PS3DS_PokemonStadiumShinyData.GetLut(species);
+            PS3DS_PokemonStadiumShinyData.Slide slide;
+            bool hasSlide = PS3DS_PokemonStadiumShinyData.TryGetSlide(species, out slide);
+
+            if (lut == null && !hasSlide)
+                return false;
+
+            Dictionary<int, Color32> memo = new Dictionary<int, Color32>();
+            Color32[] pixels = texture.Pixels;
+
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                Color32 source = pixels[i];
+                int key = (source.r << 16) | (source.g << 8) | source.b;
+
+                Color32 recolored;
+                if (!memo.TryGetValue(key, out recolored))
+                {
+                    byte r = source.r;
+                    byte g = source.g;
+                    byte b = source.b;
+
+                    if (lut != null)
+                    {
+                        int mapped;
+                        if (lut.TryGetValue(key, out mapped))
+                        {
+                            r = (byte)((mapped >> 16) & 0xFF);
+                            g = (byte)((mapped >> 8) & 0xFF);
+                            b = (byte)(mapped & 0xFF);
+                        }
+                    }
+                    else
+                    {
+                        ApplyHslSlide(r, g, b, slide.Hue, slide.Saturation, slide.Lightness, out r, out g, out b);
+                    }
+
+                    recolored = new Color32(r, g, b, 255);
+                    memo.Add(key, recolored);
+                }
+
+                pixels[i] = new Color32(recolored.r, recolored.g, recolored.b, source.a);
+            }
+
+            return true;
+        }
+
+        private static void ApplyHslSlide(byte sourceR, byte sourceG, byte sourceB, int hueDegrees, int saturationSteps, int lightnessSteps, out byte resultR, out byte resultG, out byte resultB)
+        {
+            double r = sourceR / 255.0;
+            double g = sourceG / 255.0;
+            double b = sourceB / 255.0;
+            double maxValue = Math.Max(r, Math.Max(g, b));
+            double minValue = Math.Min(r, Math.Min(g, b));
+            double lightness = (maxValue + minValue) * 0.5;
+            double saturation = 0.0;
+            double hue = 0.0;
+
+            if (maxValue != minValue)
+            {
+                double delta = maxValue - minValue;
+                saturation = lightness > 0.5 ? delta / (2.0 - maxValue - minValue) : delta / (maxValue + minValue);
+                if (maxValue == r)
+                    hue = (g - b) / delta + (g < b ? 6.0 : 0.0);
+                else if (maxValue == g)
+                    hue = (b - r) / delta + 2.0;
+                else
+                    hue = (r - g) / delta + 4.0;
+                hue *= 60.0;
+            }
+
+            double saturationShift = saturationSteps * 0.125;
+            double lightnessShift = lightnessSteps * 0.125;
+
+            if (saturation <= 0.0)
+            {
+                if (lightnessShift == 0.0)
+                {
+                    resultR = sourceR;
+                    resultG = sourceG;
+                    resultB = sourceB;
+                    return;
+                }
+                byte gray = ToByteRounded(ShiftLightness(lightness, lightnessShift) * 255.0);
+                resultR = gray; resultG = gray; resultB = gray;
+                return;
+            }
+
+            saturation = ShiftSaturation(saturation, saturationShift);
+            lightness = ShiftLightness(lightness, lightnessShift);
+            HslToRgb(hue + hueDegrees, saturation, lightness, out resultR, out resultG, out resultB);
+        }
+
+        private static double ShiftSaturation(double saturation, double shift)
+        {
+            if (shift == 0.0) return saturation;
+            return Math.Max(0.0, Math.Min(1.0, saturation * (1.0 + shift)));
+        }
+
+        private static double ShiftLightness(double lightness, double shift)
+        {
+            if (shift == 0.0) return lightness;
+            if (shift < 0.0) return Math.Max(0.0, lightness * (1.0 + shift));
+            return Math.Min(1.0, lightness + shift * (1.0 - lightness));
+        }
+
+        private static void HslToRgb(double hueDegrees, double saturation, double lightness, out byte r, out byte g, out byte b)
+        {
+            if (saturation <= 0.0)
+            {
+                byte gray = ToByteRounded(lightness * 255.0);
+                r = gray; g = gray; b = gray;
+                return;
+            }
+
+            double hue = hueDegrees % 360.0;
+            if (hue < 0.0) hue += 360.0;
+            hue /= 360.0;
+            double q = lightness < 0.5 ? lightness * (1.0 + saturation) : lightness + saturation - lightness * saturation;
+            double p = 2.0 * lightness - q;
+            r = ToByteRounded(HueToRgb(p, q, hue + 1.0 / 3.0) * 255.0);
+            g = ToByteRounded(HueToRgb(p, q, hue) * 255.0);
+            b = ToByteRounded(HueToRgb(p, q, hue - 1.0 / 3.0) * 255.0);
+        }
+
+        private static double HueToRgb(double p, double q, double t)
+        {
+            if (t < 0.0) t += 1.0;
+            if (t > 1.0) t -= 1.0;
+            if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+            if (t < 1.0 / 2.0) return q;
+            if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+            return p;
+        }
+
+        private static byte ToByteRounded(double value)
+        {
+            return (byte)Math.Max(0, Math.Min(255, (int)Math.Floor(value + 0.5)));
+        }
+
+        private static void ExportAllDebugTextures(FragmentModel model, string folder, bool flipTexturesY, bool flipTexturesX)
+        {
+            string debugFolder = folder + "/DebugTextures";
+            PS3DS_PokemonStadiumModelImporter.EnsureAssetFolder(debugFolder);
+
+            for (int textureIndex = 0; textureIndex < model.Textures.Count; textureIndex++)
+            {
+                try
+                {
+                    int tlutIndex = FindTlutForTexture(model, textureIndex);
+                    DecodedTexture decoded = DecodeTexture(model, textureIndex, tlutIndex, 0);
+                    PrepareDecodedTexture(decoded, flipTexturesY, flipTexturesX);
+
+                    Texture2D texture = new Texture2D(decoded.Width, decoded.Height, TextureFormat.RGBA32, false);
+                    texture.name = "Texture_" + textureIndex.ToString("00");
+                    texture.SetPixels32(decoded.Pixels);
+                    texture.Apply(false, false);
+
+                    string texturePath = debugFolder + "/" + texture.name + ".png";
+                    File.WriteAllBytes(ToAbsolutePath(texturePath), texture.EncodeToPNG());
+                    UnityEngine.Object.DestroyImmediate(texture);
+
+                    AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
+                    TextureImporter importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
+                    if (importer != null)
+                    {
+                        importer.textureType = TextureImporterType.Default;
+                        importer.mipmapEnabled = false;
+                        importer.filterMode = FilterMode.Point;
+                        importer.alphaIsTransparency = true;
+                        importer.wrapMode = TextureWrapMode.Clamp;
+                        importer.SaveAndReimport();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[Stadium2Unity DebugTextures] Texture " + textureIndex + " failed: " + ex.Message);
+                }
+            }
+
+            Debug.Log("[Stadium2Unity DebugTextures] Exported " + model.Textures.Count + " raw decoded textures for " + model.Name + " to " + debugFolder + ".");
+        }
+
+        private static void PrepareDecodedTexture(DecodedTexture texture, bool flipTexturesY, bool flipTexturesX)
+        {
+            if (flipTexturesY)
+                FlipTextureY(texture);
+            if (flipTexturesX)
+                FlipTextureX(texture);
+        }
+
+        private static bool IsPaletteTexture(FragmentModel model, int textureIndex)
+        {
+            return textureIndex >= 0 &&
+                   textureIndex < model.Textures.Count &&
+                   model.Textures[textureIndex].Format == 2 &&
+                   model.Textures[textureIndex].Size == 0;
+        }
+
+        private static void LogShinyDiagnostics(FragmentModel model, string folder)
+        {
+            StringBuilder report = new StringBuilder();
+            report.AppendLine("Pokemon Stadium deep material / texture diagnostics");
+            report.AppendLine("Model: " + model.Species.ToString("000") + " " + model.Name);
+            report.AppendLine("Textures: " + model.Textures.Count);
+            report.AppendLine("TLUTs: " + model.Tluts.Count);
+            report.AppendLine("Primitives: " + model.Primitives.Count);
+            report.AppendLine();
+
+            report.AppendLine("=== TEXTURE TABLE ===");
+            int ci4Count = 0;
+            for (int i = 0; i < model.Textures.Count; i++)
+            {
+                TextureRecord texture = model.Textures[i];
+                int tlut = FindTlutForTexture(model, i);
+                bool ci4 = texture.Format == 2 && texture.Size == 0;
+                if (ci4)
+                    ci4Count++;
+
+                report.Append("Texture ");
+                report.Append(i.ToString("00"));
+                report.Append(": format=");
+                report.Append(texture.Format);
+                report.Append(" (");
+                report.Append(GetTextureFormatName(texture.Format));
+                report.Append("), size=");
+                report.Append(texture.Size);
+                report.Append(" (");
+                report.Append(GetTextureSizeName(texture.Size));
+                report.Append("), dimensions=");
+                report.Append(texture.Width);
+                report.Append('x');
+                report.Append(texture.Height);
+                report.Append(", data=0x");
+                report.Append(texture.DataOffset.ToString("X8"));
+                report.Append(", firstPrimitiveTLUT=");
+                report.Append(tlut);
+                report.Append(", CI4=");
+                report.Append(ci4 ? "YES" : "NO");
+                report.AppendLine();
+            }
+
+            report.AppendLine();
+            report.AppendLine("=== TLUT TABLE ===");
+            for (int i = 0; i < model.Tluts.Count; i++)
+            {
+                TlutRecord tlut = model.Tluts[i];
+                report.Append("TLUT ");
+                report.Append(i.ToString("00"));
+                report.Append(": count=");
+                report.Append(tlut.Count);
+                report.Append(", data=0x");
+                report.Append(tlut.DataOffset.ToString("X8"));
+                report.Append(", displayList=0x");
+                report.Append(tlut.DisplayList.ToString("X8"));
+                report.AppendLine();
+                DumpDisplayList(report, model.Reader, tlut.DisplayList, "  ", 0, true);
+            }
+
+            report.AppendLine();
+            report.AppendLine("=== PRIMITIVES / MATERIALS ===");
+            HashSet<int> dumpedMaterials = new HashSet<int>();
+            for (int i = 0; i < model.Primitives.Count; i++)
+            {
+                PrimitiveData primitive = model.Primitives[i];
+                report.Append("Primitive ");
+                report.Append(i.ToString("00"));
+                report.Append(": texture=");
+                report.Append(primitive.Texture);
+                report.Append(", tlut=");
+                report.Append(primitive.Tlut);
+                report.Append(", parsedPalette=");
+                report.Append(primitive.Palette);
+                report.Append(", texAnim=");
+                report.Append(primitive.TextureAnimation);
+                report.Append(", mirrorS=");
+                report.Append(primitive.MirrorS);
+                report.Append(", mirrorT=");
+                report.Append(primitive.MirrorT);
+                report.Append(", clampS=");
+                report.Append(primitive.ClampS);
+                report.Append(", clampT=");
+                report.Append(primitive.ClampT);
+                report.Append(", materialDL=0x");
+                report.Append(primitive.MaterialDisplayList.ToString("X8"));
+                report.AppendLine();
+
+                if (primitive.MaterialDisplayList >= 0 && dumpedMaterials.Add(primitive.MaterialDisplayList))
+                {
+                    report.AppendLine("  Material display list:");
+                    DumpDisplayList(report, model.Reader, primitive.MaterialDisplayList, "    ", 0, false);
+                }
+            }
+
+            report.AppendLine();
+            report.AppendLine("=== AUX ANIMATIONS / TEXTURE CHANNELS ===");
+            if (model.AuxAnimations.Count == 0)
+            {
+                report.AppendLine("No auxiliary animations found.");
+            }
+            else
+            {
+                for (int auxIndex = 0; auxIndex < model.AuxAnimations.Count; auxIndex++)
+                {
+                    AuxAnimationData aux = model.AuxAnimations[auxIndex];
+                    report.Append("AuxAnimation ");
+                    report.Append(auxIndex.ToString("00"));
+                    report.Append(": frames=");
+                    report.Append(aux.FrameCount);
+                    report.Append(", loopStart=");
+                    report.Append(aux.LoopStart);
+                    report.Append(", flags=0x");
+                    report.Append(aux.Flags.ToString("X2"));
+                    report.Append(", channels=");
+                    report.Append(aux.Channels != null ? aux.Channels.Length : 0);
+                    report.AppendLine();
+
+                    if (aux.Channels == null)
+                        continue;
+
+                    for (int channelIndex = 0; channelIndex < aux.Channels.Length; channelIndex++)
+                    {
+                        int[] values = aux.Channels[channelIndex];
+                        report.Append("  Channel ");
+                        report.Append(channelIndex.ToString("00"));
+                        report.Append(": ");
+                        if (values == null || values.Length == 0)
+                        {
+                            report.AppendLine("<empty>");
+                            continue;
+                        }
+
+                        report.Append("values=[");
+                        for (int frame = 0; frame < values.Length; frame++)
+                        {
+                            if (frame > 0) report.Append(',');
+                            report.Append(values[frame]);
+                        }
+                        report.AppendLine("]");
+
+                        report.Append("    runs: ");
+                        int runStart = 0;
+                        int runValue = values[0];
+                        bool firstRun = true;
+                        for (int frame = 1; frame <= values.Length; frame++)
+                        {
+                            bool endsRun = frame == values.Length || values[frame] != runValue;
+                            if (!endsRun)
+                                continue;
+
+                            if (!firstRun) report.Append(" | ");
+                            report.Append(runStart);
+                            report.Append('-');
+                            report.Append(frame - 1);
+                            report.Append(" => Texture ");
+                            report.Append(runValue);
+                            firstRun = false;
+
+                            if (frame < values.Length)
+                            {
+                                runStart = frame;
+                                runValue = values[frame];
+                            }
+                        }
+                        report.AppendLine();
+                    }
+                }
+            }
+
+            report.AppendLine();
+            report.AppendLine("=== PRIMITIVE -> AUX CHANNEL REFERENCES ===");
+            for (int primitiveIndex = 0; primitiveIndex < model.Primitives.Count; primitiveIndex++)
+            {
+                PrimitiveData primitive = model.Primitives[primitiveIndex];
+                if (primitive.TextureAnimation < 0)
+                    continue;
+                report.Append("Primitive ");
+                report.Append(primitiveIndex.ToString("00"));
+                report.Append(" uses texture animation channel ");
+                report.Append(primitive.TextureAnimation);
+                report.Append(" (base texture ");
+                report.Append(primitive.Texture);
+                report.AppendLine(")");
+            }
+
+            report.AppendLine();
+            report.AppendLine("=== SUMMARY ===");
+            report.AppendLine("CI4 texture count: " + ci4Count);
+            if (ci4Count == 0)
+            {
+                report.AppendLine("No CI4 textures were found, so a CI4 TLUT-bank shiny exporter cannot recolor this model.");
+                report.AppendLine("Inspect the material display lists above for G_SETPRIMCOLOR/G_SETENVCOLOR/G_SETBLENDCOLOR or alternate texture/TLUT state.");
+            }
+
+            string reportPath = folder + "/ShinyDiagnostics.txt";
+            File.WriteAllText(ToAbsolutePath(reportPath), report.ToString(), new UTF8Encoding(false));
+            AssetDatabase.ImportAsset(reportPath, ImportAssetOptions.ForceSynchronousImport);
+
+            Debug.Log("[Stadium2Unity Shiny] Deep diagnostics written for " +
+                      model.Species.ToString("000") + " " + model.Name +
+                      ": textures=" + model.Textures.Count +
+                      ", tluts=" + model.Tluts.Count +
+                      ", CI4=" + ci4Count +
+                      ". Report: " + reportPath);
+        }
+
+        private static string GetTextureFormatName(int format)
+        {
+            if (format == 0) return "RGBA";
+            if (format == 1) return "YUV";
+            if (format == 2) return "CI";
+            if (format == 3) return "IA";
+            if (format == 4) return "I";
+            return "Unknown";
+        }
+
+        private static string GetTextureSizeName(int size)
+        {
+            if (size == 0) return "4b";
+            if (size == 1) return "8b";
+            if (size == 2) return "16b";
+            if (size == 3) return "32b";
+            return "Unknown";
+        }
+
+        private static void DumpDisplayList(StringBuilder report, FragmentReader reader, int offset, string indent, int depth, bool tlutList)
+        {
+            if (reader == null || offset < 0 || offset + 8 > reader.Data.Length)
+            {
+                report.Append(indent);
+                report.AppendLine("<invalid display list>");
+                return;
+            }
+
+            if (depth > 6)
+            {
+                report.Append(indent);
+                report.AppendLine("<maximum nested display-list depth reached>");
+                return;
+            }
+
+            int commandOffset = offset;
+            int guard = 0;
+            while (commandOffset >= 0 && commandOffset + 8 <= reader.Data.Length && guard++ < 256)
+            {
+                uint w0 = reader.U32(commandOffset);
+                uint w1 = reader.U32(commandOffset + 4);
+                int op = (int)(w0 >> 24);
+
+                report.Append(indent);
+                report.Append("0x");
+                report.Append(commandOffset.ToString("X8"));
+                report.Append("  ");
+                report.Append(GetDisplayListOpcodeName(op));
+                report.Append("  w0=0x");
+                report.Append(w0.ToString("X8"));
+                report.Append(" w1=0x");
+                report.Append(w1.ToString("X8"));
+                AppendDecodedDisplayListCommand(report, reader, op, w0, w1, tlutList);
+                report.AppendLine();
+
+                commandOffset += 8;
+                if (op == 0xDF)
+                    break;
+
+                if (op == 0xDE)
+                {
+                    int nested = unchecked((int)w1) - FragmentReader.BaseAddress;
+                    report.Append(indent);
+                    report.Append("  -> nested 0x");
+                    report.Append(nested.ToString("X8"));
+                    report.AppendLine();
+                    DumpDisplayList(report, reader, nested, indent + "    ", depth + 1, tlutList);
+                    if (((w0 >> 16) & 0xFF) != 0)
+                        break;
+                }
+            }
+
+            if (guard >= 256)
+            {
+                report.Append(indent);
+                report.AppendLine("<display-list guard limit reached>");
+            }
+        }
+
+        private static string GetDisplayListOpcodeName(int op)
+        {
+            switch (op)
+            {
+                case 0xD7: return "G_TEXTURE";
+                case 0xD9: return "G_GEOMETRYMODE";
+                case 0xDE: return "G_DL";
+                case 0xDF: return "G_ENDDL";
+                case 0xE2: return "G_SETOTHERMODE_L";
+                case 0xE3: return "G_SETOTHERMODE_H";
+                case 0xE6: return "G_RDPLOADSYNC";
+                case 0xE7: return "G_RDPPIPESYNC";
+                case 0xE8: return "G_RDPTILESYNC";
+                case 0xF0: return "G_LOADTLUT";
+                case 0xF2: return "G_SETTILESIZE";
+                case 0xF3: return "G_LOADBLOCK";
+                case 0xF4: return "G_LOADTILE";
+                case 0xF5: return "G_SETTILE";
+                case 0xF7: return "G_SETFILLCOLOR";
+                case 0xF8: return "G_SETFOGCOLOR";
+                case 0xF9: return "G_SETBLENDCOLOR";
+                case 0xFA: return "G_SETPRIMCOLOR";
+                case 0xFB: return "G_SETENVCOLOR";
+                case 0xFC: return "G_SETCOMBINE";
+                case 0xFD: return "G_SETTIMG";
+                case 0xFE: return "G_SETZIMG";
+                case 0xFF: return "G_SETCIMG";
+                default: return "OP_" + op.ToString("X2");
+            }
+        }
+
+        private static void AppendDecodedDisplayListCommand(StringBuilder report, FragmentReader reader, int op, uint w0, uint w1, bool tlutList)
+        {
+            if (op == 0xFD)
+            {
+                int format = (int)((w0 >> 21) & 0x07);
+                int size = (int)((w0 >> 19) & 0x03);
+                int width = (int)(w0 & 0x0FFF) + 1;
+                int address = unchecked((int)w1) - FragmentReader.BaseAddress;
+                report.Append("  fmt="); report.Append(format); report.Append("/"); report.Append(GetTextureFormatName(format));
+                report.Append(" size="); report.Append(size); report.Append("/"); report.Append(GetTextureSizeName(size));
+                report.Append(" width="); report.Append(width);
+                report.Append(" address=0x"); report.Append(address.ToString("X8"));
+            }
+            else if (op == 0xF5)
+            {
+                int format = (int)((w0 >> 21) & 0x07);
+                int size = (int)((w0 >> 19) & 0x03);
+                int line = (int)((w0 >> 9) & 0x01FF);
+                int tmem = (int)(w0 & 0x01FF);
+                int tile = (int)((w1 >> 24) & 0x07);
+                int palette = (int)((w1 >> 20) & 0x0F);
+                int cmt = (int)((w1 >> 18) & 0x03);
+                int maskT = (int)((w1 >> 14) & 0x0F);
+                int shiftT = (int)((w1 >> 10) & 0x0F);
+                int cms = (int)((w1 >> 8) & 0x03);
+                int maskS = (int)((w1 >> 4) & 0x0F);
+                int shiftS = (int)(w1 & 0x0F);
+                report.Append("  tile="); report.Append(tile);
+                report.Append(" palette="); report.Append(palette);
+                report.Append(" fmt="); report.Append(format); report.Append("/"); report.Append(GetTextureFormatName(format));
+                report.Append(" size="); report.Append(size); report.Append("/"); report.Append(GetTextureSizeName(size));
+                report.Append(" line="); report.Append(line);
+                report.Append(" tmem="); report.Append(tmem);
+                report.Append(" cms="); report.Append(cms);
+                report.Append(" cmt="); report.Append(cmt);
+                report.Append(" maskS="); report.Append(maskS);
+                report.Append(" maskT="); report.Append(maskT);
+                report.Append(" shiftS="); report.Append(shiftS);
+                report.Append(" shiftT="); report.Append(shiftT);
+            }
+            else if (op == 0xF0)
+            {
+                int tile = (int)((w1 >> 24) & 0x07);
+                int count = (int)((w1 >> 14) & 0x03FF) + 1;
+                report.Append("  tile="); report.Append(tile);
+                report.Append(" count="); report.Append(count);
+            }
+            else if (op == 0xFA || op == 0xFB || op == 0xF9 || op == 0xF7 || op == 0xF8)
+            {
+                byte r = (byte)(w1 >> 24);
+                byte g = (byte)(w1 >> 16);
+                byte b = (byte)(w1 >> 8);
+                byte a = (byte)w1;
+                report.Append("  rgba=("); report.Append(r); report.Append(','); report.Append(g); report.Append(','); report.Append(b); report.Append(','); report.Append(a); report.Append(')');
+            }
+            else if (op == 0xFC)
+            {
+                report.Append("  combineMux=0x"); report.Append((w0 & 0x00FFFFFFu).ToString("X6")); report.Append(w1.ToString("X8"));
+            }
+            else if (op == 0xDE)
+            {
+                int nested = unchecked((int)w1) - FragmentReader.BaseAddress;
+                report.Append("  target=0x"); report.Append(nested.ToString("X8"));
+                report.Append(" push="); report.Append((((w0 >> 16) & 0xFF) == 0) ? "YES" : "NO");
+            }
+        }
+
+        private static int GetAvailablePaletteCount(FragmentModel model, int tlutIndex)
+        {
+            if (model == null || model.Reader == null || tlutIndex < 0 || tlutIndex >= model.Tluts.Count)
+                return 1;
+
+            int baseOffset = model.Tluts[tlutIndex].DataOffset;
+            if (baseOffset < 0 || baseOffset >= model.Reader.Data.Length)
+                return 1;
+
+            int availableBytes = model.Reader.Data.Length - baseOffset;
+            int availableBanks = availableBytes / (16 * 2);
+            return Mathf.Clamp(availableBanks, 1, 16);
+        }
+
+        private static void WriteTextureAsset(DecodedTexture decoded, string textureName, string texturePath, bool mirrorTextures, PrimitiveData primitive)
+        {
+            Texture2D texture = new Texture2D(decoded.Width, decoded.Height, TextureFormat.RGBA32, false);
+            texture.name = textureName;
+            texture.SetPixels32(decoded.Pixels);
+            texture.Apply(false, false);
+            File.WriteAllBytes(ToAbsolutePath(texturePath), texture.EncodeToPNG());
+            UnityEngine.Object.DestroyImmediate(texture);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceSynchronousImport);
+            TextureImporter importer = AssetImporter.GetAtPath(texturePath) as TextureImporter;
+            if (importer == null)
+                return;
+
+            importer.textureType = TextureImporterType.Default;
+            importer.mipmapEnabled = false;
+            importer.filterMode = FilterMode.Bilinear;
+            importer.alphaIsTransparency = true;
+#if UNITY_2017_1_OR_NEWER
+            importer.wrapModeU = mirrorTextures && primitive.MirrorS ? TextureWrapMode.Mirror : TextureWrapMode.Clamp;
+            importer.wrapModeV = mirrorTextures && primitive.MirrorT ? TextureWrapMode.Mirror : TextureWrapMode.Clamp;
+#else
+            importer.wrapMode = TextureWrapMode.Clamp;
+#endif
+            importer.SaveAndReimport();
         }
 
 #if UNITY_2017_1_OR_NEWER
@@ -1846,12 +4060,14 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             Dictionary<string, PrimitiveData> variants,
             int textureIndex,
             int tlut,
+            int palette,
             bool mirrorS,
             bool mirrorT)
         {
             PrimitiveData variant = new PrimitiveData();
             variant.Texture = textureIndex;
             variant.Tlut = tlut;
+            variant.Palette = palette;
             variant.ClampS = true;
             variant.ClampT = true;
             variant.MirrorS = mirrorS;
@@ -1872,6 +4088,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
         {
             return primitive.Texture + ":" +
                    primitive.Tlut + ":" +
+                   primitive.Palette + ":" +
                    primitive.MirrorS + ":" +
                    primitive.MirrorT + ":" +
                    primitive.ClampS + ":" +
@@ -2412,6 +4629,7 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
             key.Tlut = source.Tlut;
             key.ClampS = true;
             key.ClampT = true;
+            key.Palette = 0;
             key.MirrorS = mirrorTextures && source.MirrorS;
             key.MirrorT = mirrorTextures && source.MirrorT;
 
@@ -2510,6 +4728,9 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 if (baseOffset >= 0)
                 {
                     if (texture.Size == 0) baseOffset += palette * 16 * 2;
+                    int requiredEnd = baseOffset + entries * 2;
+                    if (baseOffset < 0 || requiredEnd > f.Data.Length)
+                        throw new InvalidDataException("TLUT palette read is outside the fragment. Texture=" + index + ", TLUT=" + tlutIndex + ", palette=" + palette + ", base=0x" + baseOffset.ToString("X") + ", requiredEnd=0x" + requiredEnd.ToString("X") + ", fragmentSize=0x" + f.Data.Length.ToString("X") + ".");
                     for (int i = 0; i < entries; i++) paletteColors[i] = Rgba5551(f.U16(baseOffset + i * 2));
                 }
                 else for (int i = 0; i < entries; i++) paletteColors[i] = new Color32(255, 0, 255, 255);
