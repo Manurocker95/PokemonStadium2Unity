@@ -1516,14 +1516,14 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 {
                     bool attachAnimationSystem = skinnedPrefab &&
                                                  contentMode == PS3DS_PokemonStadiumModelImporter.ContentMode.Everything;
-                    Animation legacyAnimation = null;
+                    UnityEngine.Animation legacyAnimation = null;
                     Animator mecanimAnimator = null;
                     List<AnimationClip> createdClips = new List<AnimationClip>();
 
                     if (attachAnimationSystem)
                     {
                         if (animationSystemMode == PS3DS_PokemonStadiumModelImporter.AnimationSystemMode.Legacy)
-                            legacyAnimation = root.AddComponent<Animation>();
+                            legacyAnimation = root.AddComponent<UnityEngine.Animation>();
                         else
                             mecanimAnimator = root.AddComponent<Animator>();
                     }
