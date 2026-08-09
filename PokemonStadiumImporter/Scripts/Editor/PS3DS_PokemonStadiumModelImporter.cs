@@ -712,8 +712,70 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                         }
                         else
                         {
-                            missingBase++;
-                            Debug.LogWarning("[Stadium2Unity Variant] Base normal prefab was not found for " + model.Species.ToString("000") + " " + model.Name + ". Import the model normally once before using Import Variant.");
+                            Debug.Log("[Stadium2Unity Variant] Base prefab missing for " +
+                                model.Species.ToString("000") + " " + model.Name +
+                                ". Importing base model first, then creating the variant.");
+
+                            UnityModelWriter.Write(
+                                model,
+                                _outputPath,
+                                i,
+                                true,
+                                PS3DS_PokemonStadiumModelImporter.ContentMode.Everything,
+                                true,
+                                _prefabRendererMode,
+                                false,
+                                _flipTexturesY,
+                                _flipTexturesX,
+                                _mirrorTextures,
+                                _animationSystemMode,
+                                _materialAnimationMode,
+                                false,
+                                _combineParts,
+                                _materialShader,
+                                _vertexColorsAsGrayscale,
+                                _importVertexColors,
+                                _vertexColorLuminance,
+                                _animatedVertexColorStrength,
+                                _exportShiny,
+                                false,
+                                false,
+                                false,
+                                _colorVariantMode,
+                                _variantTrainerId,
+                                _variantTrainerName,
+                                _variantNickname,
+                                _variantManualHue,
+                                true,
+                                _verboseVariants);
+
+                            if (UnityModelWriter.ImportVariantOnly(
+                                model,
+                                _outputPath,
+                                i,
+                                _flipTexturesY,
+                                _flipTexturesX,
+                                _mirrorTextures,
+                                _materialShader,
+                                _colorVariantMode,
+                                _variantTrainerId,
+                                _variantTrainerName,
+                                _variantNickname,
+                                _variantManualHue,
+                                _animationSystemMode,
+                                _materialAnimationMode,
+                                _instantiatePrefab,
+                                _applyColorVariant,
+                                _verboseVariants))
+                            {
+                                imported++;
+                            }
+                            else
+                            {
+                                missingBase++;
+                                Debug.LogWarning("[Stadium2Unity Variant] Could not create the base prefab or append the variant for " +
+                                    model.Species.ToString("000") + " " + model.Name + ".");
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -2067,9 +2129,14 @@ namespace VirtualPhenix.PokemonStadium.EditorTools
                 ReplaceRendererMaterialsWithShiny(shinyRoot, folder);
 
                 if (materialAnimationMode == PS3DS_PokemonStadiumModelImporter.MaterialAnimationMode.ByCallback)
+                {
                     ReplaceTextureSwapperTexturesWithShiny(shinyRoot, folder);
+                }
                 else
+                {
                     ReplaceAnimationMaterialCurvesWithShiny(shinyRoot, folder, folderName, animationSystemMode);
+                    ApplyInitialVariantMaterialsFromAnimation(shinyRoot);
+                }
 
                 string shinyPrefabPath = folder + "/" + folderName + "_Shiny.prefab";
                 return PrefabUtility.CreatePrefab(shinyPrefabPath, shinyRoot, ReplacePrefabOptions.ReplaceNameBased);
